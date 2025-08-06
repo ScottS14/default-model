@@ -14,7 +14,7 @@ Lenders need to decide **“approve or refuse?”** within seconds while keeping
 | Phase | Status | ETA |
 |-------|--------|-----|
 | EDA and Feature engineering script (`engineer_credit.py`) | ▢ | Week 1 |
-| Baseline LightGBM & XGBoost (CV) | ▢ | Week 2 |
+| Baseline LightGBM, XGBoost & TabNet (CV) | ▢ | Week 2 |
 | Hyper-param tuning + calibration | ▢ | Week 3 |
 | SHAP explainability | ▢ | Week 4 |
 | Docker < 400 MB + v1.0.0 release | ▢ | Week 5 |
