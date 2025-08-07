@@ -1,12 +1,19 @@
 [project]
-name = "default-model"
+name = "credit_risk"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pandas>=2.3.1",
+    "pytest>=8.4.1",
+]
 
 [dependency-groups]
 dev = [
     "ipykernel>=6.30.1",
 ]
+
+[tool.setuptools]
+packages = ["credit_risk"]
+package-dir = {"" = "src"}
