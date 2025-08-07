@@ -211,3 +211,4 @@ data/processed/*
 
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+notebooks/sandbox/
