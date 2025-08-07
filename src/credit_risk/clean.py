@@ -5,16 +5,15 @@ import pandas as pd
 
 
 # shared constants & utilities
-SENTINEL_365243: Final[int] = 365_243     # Value found in days columns
+SENTINEL_365243: Final[int] = 365_243     # value found in days columns
 _NUM_WINSOR_Q: Final[float] = 0.99        # cap numeric cols at 99th pct
 
 
 # helpers 
-
 def _replace_day_sentinels(df: pd.DataFrame, cols: Sequence[str]) -> None:
     for c in cols:
         if c in df.columns:
-            df[c].replace(SENTINEL_365243, np.nan, inplace=True)
+            df[c] = df[c].replace(SENTINEL_365243, np.nan)
 
 
 def _fix_negative_money(df: pd.DataFrame, cols: Sequence[str]) -> None:
@@ -30,7 +29,6 @@ def _winsorise_numeric(df: pd.DataFrame, q: float = _NUM_WINSOR_Q) -> None:
 
 
 def _drop_quasi_constant(df: pd.DataFrame, tol: float = 0.99) -> None:
-    
     to_drop = [c for c in df.columns if df[c].value_counts(normalize=True, dropna=False).iat[0] >= tol]
     df.drop(columns=to_drop, inplace=True)
 
@@ -39,7 +37,7 @@ def _drop_quasi_constant(df: pd.DataFrame, tol: float = 0.99) -> None:
 def clean_application(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
 
-    out.drop_duplicates(subset=["SK_ID_CURR"], inplace=True)
+    out.drop_duplicates(subset=["SK_ID_CURR"])
 
     _replace_day_sentinels(
         out,
@@ -62,6 +60,7 @@ def clean_bureau(df: pd.DataFrame) -> pd.DataFrame:
     _replace_day_sentinels(out, ["DAYS_CREDIT", "DAYS_CREDIT_ENDDATE"])
     _fix_negative_money(out, ["AMT_CREDIT_SUM_OVERDUE"])
     _winsorise_numeric(out)
+    _drop_quasi_constant(out)
 
     return out
 
