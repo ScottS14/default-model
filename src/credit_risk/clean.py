@@ -15,25 +15,30 @@ def _replace_day_sentinels(df: pd.DataFrame, cols: Sequence[str]) -> None:
         if c in df.columns:
             df[c] = df[c].replace(SENTINEL_365243, np.nan)
 
-
 def _fix_negative_money(df: pd.DataFrame, cols: Sequence[str]) -> None:
     for c in cols:
         if c in df.columns:
             df.loc[df[c] <= 0, c] = np.nan
 
-
 def _winsorise_numeric(df: pd.DataFrame, q: float = _NUM_WINSOR_Q) -> None:
     num_cols = df.select_dtypes(include="number").columns
+    if len(num_cols) == 0:
+        return
     caps = df[num_cols].quantile(q)
     df[num_cols] = df[num_cols].clip(upper=caps, axis=1)
 
-
 def _drop_quasi_constant(df: pd.DataFrame, tol: float = 0.99) -> None:
-    to_drop = [c for c in df.columns if df[c].value_counts(normalize=True, dropna=False).iat[0] >= tol]
-    df.drop(columns=to_drop, inplace=True)
+    if df.shape[1] == 0:
+        return
+    frac = df.apply(lambda s: s.value_counts(normalize=True, dropna=False).max() if len(s) else 0.0)
+    to_drop = frac[frac >= tol].index.tolist()
+    if to_drop:
+        df.drop(columns=to_drop, inplace=True)
 
 def _coerce_binary_flags(df: pd.DataFrame, prefix: str = "FLAG_") -> None:
     cols = [c for c in df.columns if c.startswith(prefix)]
+    if not cols:
+        return
     for c in cols:
         s = df[c]
         df[c] = np.where(s == 1, 1,
@@ -41,12 +46,12 @@ def _coerce_binary_flags(df: pd.DataFrame, prefix: str = "FLAG_") -> None:
                  np.where(s.astype(str).str.upper().isin({"Y","YES","TRUE"}), 1,
                  np.where(s.astype(str).str.upper().isin({"N","NO","FALSE"}), 0, np.nan))))
 
-def _fix_nonnegative(df: pd.DataFrame, cols: list[str]) -> None:
+def _fix_nonnegative(df: pd.DataFrame, cols: Sequence[str]) -> None:
     for c in cols:
         if c in df.columns:
             df.loc[df[c] < 0, c] = np.nan
 
-def _enforce_nonpositive_days(df: pd.DataFrame, cols: list[str]) -> None:
+def _enforce_nonpositive_days(df: pd.DataFrame, cols: Sequence[str]) -> None:
     for c in cols:
         if c in df.columns:
             df.loc[df[c] > 0, c] = np.nan
