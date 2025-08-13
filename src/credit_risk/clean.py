@@ -20,12 +20,32 @@ def _fix_negative_money(df: pd.DataFrame, cols: Sequence[str]) -> None:
         if c in df.columns:
             df.loc[df[c] <= 0, c] = np.nan
 
-def _winsorise_numeric(df: pd.DataFrame, q: float = _NUM_WINSOR_Q) -> None:
-    num_cols = df.select_dtypes(include="number").columns
-    if len(num_cols) == 0:
+def _winsorise_numeric(
+    df: pd.DataFrame,
+    q: float = _NUM_WINSOR_Q,
+    *,
+    exclude_prefixes: tuple[str, ...] = ("FLAG_", "NFLAG")
+) -> None:
+    
+    num_cols = df.select_dtypes(include="number").columns.tolist()
+    if not num_cols:
         return
-    caps = df[num_cols].quantile(q)
-    df[num_cols] = df[num_cols].clip(upper=caps, axis=1)
+
+    by_prefix = {c for c in num_cols if any(c.startswith(p) for p in exclude_prefixes)}
+
+    
+    binary_like = {
+        c for c in num_cols
+        if df[c].dropna().isin([0, 1]).all()
+    }
+
+    keep = [c for c in num_cols if c not in by_prefix | binary_like]
+    if not keep:
+        return
+
+    caps = df[keep].quantile(q)
+    df[keep] = df[keep].clip(upper=caps, axis=1)
+
 
 def _drop_quasi_constant(df: pd.DataFrame, tol: float = 0.99) -> None:
     if df.shape[1] == 0:

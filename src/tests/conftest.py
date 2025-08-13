@@ -15,6 +15,7 @@ def tiny_app() -> pd.DataFrame:
         "AMT_INCOME_TOTAL": [0, 200_000],
         "XNA_COL":          ["XNA", "XAP"],
         "FLAG_CONST":       [1, 1],
+        "FLAG_TEST":        [1, "NO"]
     })
 
 @pytest.fixture
@@ -34,6 +35,8 @@ def tiny_prev() -> pd.DataFrame:
             "SK_ID_CURR":  [1, 2],
             "AMT_CREDIT":  [-5_000, 250_000],  
             "AMT_ANNUITY": [   500,   8_000],
+            "NFLAG_TEST":  ['Y', 'NO'],
+            "FLAG_TEST":   ['YES', 'FALSE']
         }
     )
 

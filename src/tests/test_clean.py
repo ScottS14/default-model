@@ -16,6 +16,10 @@ def test_application_constant_drop(tiny_app):
     out = C.clean_application(tiny_app)
     assert "FLAG_CONST" not in out.columns
 
+def test_application_binary_flags(tiny_app):
+    out = C.clean_application(tiny_app)
+    assert set(out["FLAG_TEST"].dropna().unique()) <= {0, 1}
+
 # def test bureau cleaner
 def test_bureau_negative_to_nan(tiny_bureau: pd.DataFrame) -> None:
     out = C.clean_bureau(tiny_bureau)
@@ -77,4 +81,7 @@ def test_prev_negative_money_to_nan(tiny_prev):
     out = C.clean_prev(tiny_prev)
     assert pd.isna(out.loc[0, "AMT_CREDIT"])
 
-
+def test_prev_binary_flags(tiny_prev):
+    out = C.clean_prev(tiny_prev)
+    assert set(out["FLAG_TEST"].dropna().unique()) <= {0, 1}
+    assert set(out["NFLAG_TEST"].dropna().unique()) <= {0, 1}
