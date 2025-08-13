@@ -5,6 +5,7 @@ import pytest
 # tests for application cleaner
 def test_application_sentinel_to_nan(tiny_app):
     out = C.clean_application(tiny_app)
+    print(out)
     assert out["DAYS_EMPLOYED"].isna().iloc[0]
 
 def test_application_negative_money_to_nan(tiny_app):

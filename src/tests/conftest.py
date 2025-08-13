@@ -11,7 +11,7 @@ S = C.SENTINEL_365243  # the day sentinel constant
 def tiny_app() -> pd.DataFrame:
     return pd.DataFrame({
         "SK_ID_CURR":       [1, 2],
-        "DAYS_EMPLOYED":    [S, 100],
+        "DAYS_EMPLOYED":    [S, -100],
         "AMT_INCOME_TOTAL": [0, 200_000],
         "XNA_COL":          ["XNA", "XAP"],
         "FLAG_CONST":       [1, 1],
