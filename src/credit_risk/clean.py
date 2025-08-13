@@ -32,6 +32,25 @@ def _drop_quasi_constant(df: pd.DataFrame, tol: float = 0.99) -> None:
     to_drop = [c for c in df.columns if df[c].value_counts(normalize=True, dropna=False).iat[0] >= tol]
     df.drop(columns=to_drop, inplace=True)
 
+def _coerce_binary_flags(df: pd.DataFrame, prefix: str = "FLAG_") -> None:
+    cols = [c for c in df.columns if c.startswith(prefix)]
+    for c in cols:
+        s = df[c]
+        df[c] = np.where(s == 1, 1,
+                 np.where(s == 0, 0,
+                 np.where(s.astype(str).str.upper().isin({"Y","YES","TRUE"}), 1,
+                 np.where(s.astype(str).str.upper().isin({"N","NO","FALSE"}), 0, np.nan))))
+
+def _fix_nonnegative(df: pd.DataFrame, cols: list[str]) -> None:
+    for c in cols:
+        if c in df.columns:
+            df.loc[df[c] < 0, c] = np.nan
+
+def _enforce_nonpositive_days(df: pd.DataFrame, cols: list[str]) -> None:
+    for c in cols:
+        if c in df.columns:
+            df.loc[df[c] > 0, c] = np.nan
+
 # Cleaning Tables
 
 def clean_application(df: pd.DataFrame) -> pd.DataFrame:
