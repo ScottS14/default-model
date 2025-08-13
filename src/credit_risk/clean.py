@@ -24,22 +24,19 @@ def _winsorise_numeric(
     df: pd.DataFrame,
     q: float = _NUM_WINSOR_Q,
     *,
-    exclude_prefixes: tuple[str, ...] = ("FLAG_", "NFLAG")
+    include_prefixes: tuple[str, ...] = ("AMT_",),
+    exclude_prefixes: tuple[str, ...] = ("FLAG_", "NFLAG", "CNT_", "NUM_", "SK_DPD"),
 ) -> None:
-    
     num_cols = df.select_dtypes(include="number").columns.tolist()
     if not num_cols:
         return
 
-    by_prefix = {c for c in num_cols if any(c.startswith(p) for p in exclude_prefixes)}
+    cand = [c for c in num_cols if any(c.startswith(p) for p in include_prefixes)]
+    if not cand:
+        return
 
-    
-    binary_like = {
-        c for c in num_cols
-        if df[c].dropna().isin([0, 1]).all()
-    }
-
-    keep = [c for c in num_cols if c not in by_prefix | binary_like]
+    # Remove anything that looks like flags/counts if it slipped in
+    keep = [c for c in cand if not any(c.startswith(p) for p in exclude_prefixes)]
     if not keep:
         return
 
@@ -50,7 +47,9 @@ def _winsorise_numeric(
 def _drop_quasi_constant(df: pd.DataFrame, tol: float = 0.99) -> None:
     if df.shape[1] == 0:
         return
-    frac = df.apply(lambda s: s.value_counts(normalize=True, dropna=False).max() if len(s) else 0.0)
+    frac = df.apply(lambda s: s.value_counts(normalize=True, dropna=False).max()
+                     if len(s) else 0.0)
+    
     to_drop = frac[frac >= tol].index.tolist()
     if to_drop:
         df.drop(columns=to_drop, inplace=True)
@@ -64,7 +63,8 @@ def _coerce_binary_flags(df: pd.DataFrame, prefix: str = "FLAG_") -> None:
         df[c] = np.where(s == 1, 1,
                  np.where(s == 0, 0,
                  np.where(s.astype(str).str.upper().isin({"Y","YES","TRUE"}), 1,
-                 np.where(s.astype(str).str.upper().isin({"N","NO","FALSE"}), 0, np.nan))))
+                 np.where(s.astype(str).str.upper().isin({"N","NO","FALSE"}), 0,
+                           np.nan))))
 
 def _fix_nonnegative(df: pd.DataFrame, cols: Sequence[str]) -> None:
     for c in cols:
@@ -83,12 +83,20 @@ def clean_application(df: pd.DataFrame) -> pd.DataFrame:
     if "SK_ID_CURR" in out.columns:
         out.drop_duplicates(subset=["SK_ID_CURR"], inplace=True)
 
-    _replace_day_sentinels(out, ["DAYS_EMPLOYED", "DAYS_LAST_PHONE_CHANGE", "DAYS_ID_PUBLISH", "DAYS_REGISTRATION"])
-    _enforce_nonpositive_days(out, ["DAYS_BIRTH", "DAYS_EMPLOYED", "DAYS_LAST_PHONE_CHANGE", "DAYS_ID_PUBLISH", "DAYS_REGISTRATION"])
+    _replace_day_sentinels(out, ["DAYS_EMPLOYED", "DAYS_LAST_PHONE_CHANGE", 
+                                 "DAYS_ID_PUBLISH", "DAYS_REGISTRATION"])
+    
+    _enforce_nonpositive_days(out, ["DAYS_BIRTH", "DAYS_EMPLOYED", 
+                                    "DAYS_LAST_PHONE_CHANGE", "DAYS_ID_PUBLISH",
+                                      "DAYS_REGISTRATION"])
+    
     if "DAYS_BIRTH" in out.columns:
-        out.loc[(out["DAYS_BIRTH"] > -18 * 365) | (out["DAYS_BIRTH"] < -100 * 365), "DAYS_BIRTH"] = np.nan
+        out.loc[(out["DAYS_BIRTH"] > -18 * 365) | (out["DAYS_BIRTH"] < -100 * 365),
+                 "DAYS_BIRTH"] = np.nan
 
-    _fix_negative_money(out, ["AMT_INCOME_TOTAL", "AMT_CREDIT", "AMT_GOODS_PRICE", "AMT_ANNUITY"])
+    _fix_negative_money(out, ["AMT_INCOME_TOTAL", "AMT_CREDIT", "AMT_GOODS_PRICE",
+                               "AMT_ANNUITY"])
+    
     _fix_nonnegative(out, ["CNT_CHILDREN", "CNT_FAM_MEMBERS"])
     _coerce_binary_flags(out, prefix="FLAG_")
     _winsorise_numeric(out)
@@ -99,7 +107,9 @@ def clean_bureau(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
 
     _replace_day_sentinels(out, ["DAYS_CREDIT", "DAYS_CREDIT_ENDDATE"])
-    _enforce_nonpositive_days(out, ["DAYS_CREDIT", "DAYS_CREDIT_ENDDATE", "DAYS_ENDDATE_FACT"])
+    _enforce_nonpositive_days(out, ["DAYS_CREDIT", "DAYS_CREDIT_ENDDATE", 
+                                    "DAYS_ENDDATE_FACT"])
+    
     _fix_nonnegative(out, ["CNT_CREDIT_PROLONG", "CREDIT_DAY_OVERDUE"])
     _fix_negative_money(out, ["AMT_CREDIT_SUM_OVERDUE"])
     _winsorise_numeric(out)
@@ -124,7 +134,8 @@ def clean_pos(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
 
     _replace_day_sentinels(out, ["MONTHS_BALANCE"])
-    _fix_nonnegative(out, ["CNT_INSTALMENT", "CNT_INSTALMENT_FUTURE", "SK_DPD", "SK_DPD_DEF"])
+    _fix_nonnegative(out, ["CNT_INSTALMENT", "CNT_INSTALMENT_FUTURE", "SK_DPD", 
+                           "SK_DPD_DEF"])
     _winsorise_numeric(out)
     _drop_quasi_constant(out)
     return out
@@ -145,7 +156,9 @@ def clean_cc(df: pd.DataFrame) -> pd.DataFrame:
 
     _replace_day_sentinels(out, ["MONTHS_BALANCE"])
     _fix_nonnegative(out, ["SK_DPD", "SK_DPD_DEF"])
-    _fix_negative_money(out, ["AMT_BALANCE", "AMT_CREDIT_LIMIT_ACTUAL", "AMT_DRAWINGS_CURRENT"])
+    _fix_negative_money(out, ["AMT_BALANCE", "AMT_CREDIT_LIMIT_ACTUAL", 
+                              "AMT_DRAWINGS_CURRENT"])
+    
     _winsorise_numeric(out)
     _drop_quasi_constant(out)
     return out
