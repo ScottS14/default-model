@@ -48,3 +48,38 @@ def compute_app_ratios(df: pd.DataFrame) -> pd.DataFrame:
                                                 out["DAYS_REGISTRATION"].abs())
 
     return out
+
+def aggregate_bureau(bureau: pd.DataFrame, bb: pd.DataFrame) -> pd.DataFrame:
+    bb_counts = (
+        bb.groupby("SK_ID_BUREAU")["STATUS"]
+          .value_counts()
+          .unstack(fill_value=0)
+          .add_prefix("BB_STATUS_")
+          .reset_index()
+    )
+    b = bureau.merge(bb_counts, on="SK_ID_BUREAU", how="left")
+
+    bb_cols = [c for c in b.columns if c.startswith("BB_STATUS_")]
+
+    agg_dict = {
+        "AMT_CREDIT_SUM": ["mean", "sum", "max"],
+        "AMT_CREDIT_SUM_DEBT": ["mean", "sum"],
+        "DAYS_CREDIT": ["min", "max", "mean"],
+    }
+    # add SK_DPD if present
+    for c in ["SK_DPD", "SK_DPD_DEF"]:
+        if c in b.columns:
+            agg_dict[c] = ["mean", "max"]
+
+    # build final dict including bb status sums
+    final_agg = agg_dict | {c: "sum" for c in bb_cols}
+
+    agg = b.groupby("SK_ID_CURR", observed=True).agg(final_agg)
+    # flatten multiindex columns
+    agg.columns = ["BUREAU_" + "_".join(map(str, col)).upper() for col in agg.columns.to_flat_index()]
+    agg = agg.reset_index()
+
+    # cast numeric to dtype
+    num_cols = agg.select_dtypes(include="number").columns
+    agg[num_cols] = agg[num_cols]
+    return agg
