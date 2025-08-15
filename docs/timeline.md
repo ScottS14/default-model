@@ -14,7 +14,7 @@ Deliver a fully reproducible credit-risk model for the Home-Credit dataset, publ
 ### Detailed Breakdown
 
 <details>
-<summary>Week&nbsp;1 – Baseline classical & deep models</summary>
+<summary>Week&nbsp;1-2 – Baseline classical & deep models</summary>
 
 #### Objectives
 1. **Understand & clean** the raw Home-Credit tables so modelling can trust the inputs.  
@@ -32,7 +32,7 @@ Deliver a fully reproducible credit-risk model for the Home-Credit dataset, publ
 </details>
 
 <details>
-<summary>Week&nbsp;2 – Hyper-param tuning & interpretability</summary>
+<summary>Week&nbsp;3-4 – Hyper-param tuning & interpretability</summary>
 
 #### Objectives
 Improve the baseline with Optuna HPO; provide model transparency and calibrated probabilities.
@@ -46,7 +46,7 @@ Improve the baseline with Optuna HPO; provide model transparency and calibrated 
 </details>
 
 <details>
-<summary>Week&nbsp;3 – Package & publish v1.0.0</summary>
+<summary>Week&nbsp;4-5 – Package & publish v1.0.0</summary>
 
 #### Objectives
 Ship a lean, reproducible artifact and public release.
