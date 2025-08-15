@@ -48,7 +48,6 @@ def test_bureau_winsorise_upper_cap(tiny_bureau: pd.DataFrame) -> None:
         assert out[col].max() <= caps[col] + tol
 
 
-
 def test_bureau_no_constant(tiny_bureau: pd.DataFrame) -> None:
     # Create a quasi-constant column to prove it’s removed
     tiny_bureau["ALWAYS_ONE"] = 1
