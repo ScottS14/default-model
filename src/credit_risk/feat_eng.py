@@ -83,3 +83,76 @@ def aggregate_bureau(bureau: pd.DataFrame, bb: pd.DataFrame) -> pd.DataFrame:
     num_cols = agg.select_dtypes(include="number").columns
     agg[num_cols] = agg[num_cols]
     return agg
+
+def aggregate_prev(prev: pd.DataFrame, *, dtype: str = "float32") -> pd.DataFrame:
+    p = prev.copy()
+    if {"AMT_APPLICATION", "AMT_CREDIT"}.issubset(p.columns):
+        p["APP_CREDIT_PERC"] = _safe_div(p["AMT_APPLICATION"], p["AMT_CREDIT"])
+    if {"AMT_GOODS_PRICE", "AMT_CREDIT"}.issubset(p.columns):
+        p["GOODS_CREDIT_PERC"] = _safe_div(p["AMT_GOODS_PRICE"], p["AMT_CREDIT"])
+
+    agg_dict = {
+        "AMT_CREDIT": ["mean", "max"],
+        "AMT_ANNUITY": ["mean"],
+        "APP_CREDIT_PERC": ["mean"],
+        "DAYS_DECISION": ["min", "max"],
+    }
+    if "NAME_CONTRACT_STATUS" in p.columns:
+        agg_dict["NAME_CONTRACT_STATUS"] = ["nunique"]
+
+    agg = p.groupby("SK_ID_CURR", observed=True).agg(agg_dict)
+    agg.columns = ["PREV_" + "_".join(map(str, c)).upper() for c in agg.columns.to_flat_index()]
+    agg = agg.reset_index()
+    agg[agg.select_dtypes("number").columns] = agg.select_dtypes("number").astype(dtype)
+    return agg
+
+
+def aggregate_installments(ins: pd.DataFrame, *, dtype: str = "float32") -> pd.DataFrame:
+    i = ins.copy()
+    if {"AMT_PAYMENT", "AMT_INSTALMENT"}.issubset(i.columns):
+        i["PAYMENT_DIFF"] = i["AMT_PAYMENT"] - i["AMT_INSTALMENT"]
+        i["PAYMENT_PERC"] = _safe_div(i["AMT_PAYMENT"], i["AMT_INSTALMENT"])
+    if {"DAYS_ENTRY_PAYMENT", "DAYS_INSTALMENT"}.issubset(i.columns):
+        i["LATE_DAYS"] = i["DAYS_ENTRY_PAYMENT"] - i["DAYS_INSTALMENT"]
+
+    agg = i.groupby("SK_ID_CURR", observed=True).agg({
+        "PAYMENT_DIFF": ["mean", "sum", "max"],
+        "PAYMENT_PERC": ["mean", "max"],
+        "LATE_DAYS": ["mean", "max"],
+    })
+    agg.columns = ["INS_" + "_".join(map(str, c)).upper() for c in agg.columns.to_flat_index()]
+    agg = agg.reset_index()
+    agg[agg.select_dtypes("number").columns] = agg.select_dtypes("number")
+    return agg
+
+
+def aggregate_pos(pos: pd.DataFrame) -> pd.DataFrame:
+    g = pos.groupby("SK_ID_CURR", observed=True).agg({
+        "SK_DPD": ["mean", "max"] if "SK_DPD" in pos.columns else [],
+        "SK_DPD_DEF": ["mean", "max"] if "SK_DPD_DEF" in pos.columns else [],
+        "CNT_INSTALMENT_FUTURE": ["mean", "min"] if "CNT_INSTALMENT_FUTURE" in pos.columns else [],
+    })
+    # drop any empty aggs
+    g = g.loc[:, g.columns.get_level_values(0) != ""]
+    g.columns = ["POS_" + "_".join(map(str, c)).upper() for c in g.columns.to_flat_index()]
+    g = g.reset_index()
+    g[g.select_dtypes("number").columns] = g.select_dtypes("number")
+    return g
+
+
+def aggregate_cc(cc: pd.DataFrame) -> pd.DataFrame:
+    c = cc.copy()
+    if {"AMT_DRAWINGS_CURRENT", "AMT_CREDIT_LIMIT_ACTUAL"}.issubset(c.columns):
+        c["DRAW_RATIO"] = _safe_div(c["AMT_DRAWINGS_CURRENT"], c["AMT_CREDIT_LIMIT_ACTUAL"])
+
+    agg = c.groupby("SK_ID_CURR", observed=True).agg({
+        "AMT_BALANCE": ["mean", "max"] if "AMT_BALANCE" in c.columns else [],
+        "AMT_PAYMENT_TOTAL_CURRENT": ["mean", "sum"] if "AMT_PAYMENT_TOTAL_CURRENT" in c.columns else [],
+        "DRAW_RATIO": ["mean", "max"] if "DRAW_RATIO" in c.columns else [],
+        "SK_DPD": ["mean", "max"] if "SK_DPD" in c.columns else [],
+    })
+    agg = agg.loc[:, agg.columns.get_level_values(0) != ""]
+    agg.columns = ["CC_" + "_".join(map(str, c)).upper() for c in agg.columns.to_flat_index()]
+    agg = agg.reset_index()
+    agg[agg.select_dtypes("number").columns] = agg.select_dtypes("number")
+    return agg
