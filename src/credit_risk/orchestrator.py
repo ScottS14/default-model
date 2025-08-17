@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, json
+import argparse
 from pathlib import Path
 import pandas as pd
 
@@ -32,14 +32,16 @@ def build_features(app_clean: DF, *, frames: dict[str, DF], include: tuple[str, 
 
     return X
 
+def ohe_for_xgb(df: DF) -> DF:
+    cat_cols = df.select_dtypes(include=["object","category","bool"]).columns
+    return pd.get_dummies(df, columns=cat_cols, drop_first=False, dummy_na=False)
 
-
-def main(raw_dir: str, out_dir: str, include: list[str]) -> DF:
+def main(raw_dir: str, out_dir: str, include: list[str]) -> None:
     raw = Path(raw_dir)
     outp = Path(out_dir)
     outp.mkdir(parents=True, exist_ok=True)
 
-    # load raw data
+    # load raw 
     app_train = pd.read_csv(raw / "application_train.csv")
     app_test  = pd.read_csv(raw / "application_test.csv")
     bureau    = pd.read_csv(raw / "bureau.csv")
@@ -61,9 +63,45 @@ def main(raw_dir: str, out_dir: str, include: list[str]) -> DF:
 
     frames = {"bureau": bureau_c, "bb": bb, "prev": prev_c, "pos": pos_c, "ins": ins_c, "cc": cc_c}
 
-    # build features 
+    # build features (toggle tables via include)
     include_tup = tuple(include)  
     X_train = build_features(app_tr_c, frames=frames, include=include_tup)
     X_test  = build_features(app_te_c, frames=frames, include=include_tup)
-    
-    return X_train
+
+    #  split out target if present 
+    y = X_train["TARGET"] if "TARGET" in X_train.columns else None
+    if y is not None:
+        X_train = X_train.drop(columns=["TARGET"])
+
+    #  LGBM matrices: keep categoricals as is 
+    lgb_train = X_train.copy()
+    lgb_test  = X_test.copy()
+    if y is not None:
+        lgb_train["TARGET"] = y.values
+
+    #  XGB matrices: OHE and align 
+    xgb_train = ohe_for_xgb(X_train)
+    xgb_test  = ohe_for_xgb(X_test)
+    xgb_train, xgb_test = xgb_train.align(xgb_test, join="outer", axis=1, fill_value=0)
+    # ensure TARGET only on train
+    if y is not None:
+        xgb_train["TARGET"] = y.values
+        xgb_test = xgb_test.drop(columns=["TARGET"], errors="ignore")
+
+    #  save parquet files 
+    (outp / "train_features_lgbm.parquet").write_bytes(lgb_train.to_parquet(index=False))
+    (outp / "test_features_lgbm.parquet").write_bytes(lgb_test.to_parquet(index=False))
+    (outp / "train_features_xgb.parquet").write_bytes(xgb_train.to_parquet(index=False))
+    (outp / "test_features_xgb.parquet").write_bytes(xgb_test.to_parquet(index=False))
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser()
+    p.add_argument("--raw-dir", default="data/raw/home_credit")
+    p.add_argument("--out-dir", default="data/processed")
+    p.add_argument(
+        "--include", nargs="*", default=["app_ratios","bureau","previous","install","pos","cc"],
+        help="Feature blocks to include (e.g. app_ratios bureau previous)"
+    )
+    args = p.parse_args()
+    main(args.raw_dir, args.out_dir, args.include)
