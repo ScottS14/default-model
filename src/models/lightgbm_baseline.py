@@ -12,9 +12,10 @@ mlflow.autolog()
 
 load_data = pd.read_parquet('data/processed/train_features_lgbm.parquet')
 
-cols = [col for col in load_data.columns if col != 'TARGET']
+id = 'SK_ID_CURR'
+target = 'TARGET'
 
-X = load_data[cols]
+X = load_data.drop(columns=[target, id, 'fold'], errors='ignore')
 y = load_data['TARGET']
 
 dtrain = lgb.Dataset(X, label=y)
