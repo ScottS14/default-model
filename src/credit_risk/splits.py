@@ -4,7 +4,8 @@ import pandas as pd
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 from pathlib import Path
 
-def add_cv_folds(df: pd.DataFrame, y_col: str = "TARGET", n_splits: int = 5, seed: int = 42) -> pd.DataFrame:
+def add_cv_folds(df: pd.DataFrame, y_col: str = "TARGET", n_splits: int = 5, 
+                 seed: int = 42) -> pd.DataFrame:
     out = df.copy()
     out["fold"] = -1
     y = out[y_col].values

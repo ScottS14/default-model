@@ -5,7 +5,8 @@ from pathlib import Path
 import pandas as pd
 
 from credit_risk.clean import (
-    clean_application, clean_bureau, clean_prev, clean_pos, clean_installments, clean_cc
+    clean_application, clean_bureau, clean_prev, clean_pos, clean_installments, 
+    clean_cc
 )
 from credit_risk.feat_eng import (
     compute_app_ratios, aggregate_bureau, aggregate_prev,
@@ -69,7 +70,7 @@ def main(raw_dir: str, out_dir: str, include: list[str]) -> None:
     app_te_c = clean_application(app_test)
     frames = {
         "bureau": clean_bureau(bureau),
-        "bb":     bb,  # usually fine raw; your aggregator handles it
+        "bb":     bb,
         "prev":   clean_prev(prev),
         "pos":    clean_pos(pos),
         "ins":    clean_installments(ins),
@@ -86,7 +87,7 @@ def main(raw_dir: str, out_dir: str, include: list[str]) -> None:
     if y is not None:
         X_train = X_train.drop(columns=["TARGET"])
 
-    # -------- LGBM view --------
+    # LGBM view
     lgb_train = cast_lgbm_categoricals(X_train)
     lgb_test  = cast_lgbm_categoricals(X_test)
     if y is not None:
@@ -122,7 +123,9 @@ def main(raw_dir: str, out_dir: str, include: list[str]) -> None:
     xgb_train.to_parquet(outp / "train_features_xgb.parquet", index=False)
     xgb_test.to_parquet(outp / "test_features_xgb.parquet", index=False)
     (outp / "xgb_columns.json").write_text(
-        json.dumps({"columns": list(xgb_train.drop(columns=["TARGET"], errors="ignore").columns)}, indent=2)
+        json.dumps({"columns": list(xgb_train.drop(columns=["TARGET"], 
+                                                   errors="ignore").columns)}, 
+                                                   indent=2)
     )
 
 if __name__ == "__main__":
@@ -130,7 +133,8 @@ if __name__ == "__main__":
     p.add_argument("--raw-dir", default="data/raw/home_credit")
     p.add_argument("--out-dir", default="data/processed")
     p.add_argument(
-        "--include", nargs="*", default=["app_ratios", "bureau", "previous", "install", "pos", "cc"],
+        "--include", nargs="*", default=["app_ratios", "bureau", "previous", 
+                                         "install", "pos", "cc"],
         help="Feature blocks to include (e.g. app_ratios bureau previous)"
     )
     args = p.parse_args()
