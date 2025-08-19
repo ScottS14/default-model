@@ -8,7 +8,7 @@ mlflow.set_tracking_uri("http://localhost:5500")
 mlflow.set_experiment("default-model-baseline")
 mlflow.autolog()
 
-df = pd.read_parquet("data/processed/train_features_lgbm.parquet")
+df = pd.read_parquet("data/processed/train_with_folds_lgbm.parquet")
 
 ID = "SK_ID_CURR"
 TARGET = "TARGET"
