@@ -12,6 +12,7 @@ dependencies = [
     "pytest>=8.4.1",
     "pytorch-tabnet>=4.1.0",
     "scikit-learn>=1.7.1",
+    "xgboost>=3.0.4",
 ]
 
 [dependency-groups]
