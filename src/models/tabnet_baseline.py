@@ -71,7 +71,7 @@ def run_cv(X, y, folds, cat_idxs, cat_dims, params, max_epochs=200, patience=20,
             eval_name=["valid"], eval_metric=["auc"],
             max_epochs=max_epochs, patience=patience,
             batch_size=params["batch_size"], virtual_batch_size=params["virtual_batch_size"],
-            num_workers=0, drop_last=False, verbose=verbose
+            num_workers=0, drop_last=False
         )
 
         y_hat = clf.predict_proba(X_va)[:, 1]
