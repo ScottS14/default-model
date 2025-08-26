@@ -38,10 +38,11 @@ Deliver a fully reproducible credit-risk model for the Home-Credit dataset, publ
 Improve the baseline with Optuna HPO; provide model transparency and calibrated probabilities.
 
 #### Tasks
-- **CRS-2-a** 50-trial *Optuna study* on TabNet (lr, n_steps, gamma); commit `optuna_study.db`.
-- **CRS-2-b** Generate *SHAP beeswarm* and force plots for five customers.
-- **CRS-2-c** Plot *probability-calibration curve*; compute *Brier score*.
-- **CRS-2-d** Update **README** with Model Zoo table + metrics.
+- **CRS-2-a** 50-trial *Optuna study* on LightGBM; commit `optuna_study_lgb.db`.
+- **CRS-2-b** 50-trial *Optuna study* on XGBoost; commit `optuna_study_xgb.db`.
+- **CRS-2-c** Generate *SHAP beeswarm* and force plots for five customers.
+- **CRS-2-d** Plot *probability-calibration curve*; compute *Brier score*.
+- **CRS-2-e** Update **README** with Model Zoo table + metrics.
 
 </details>
 
