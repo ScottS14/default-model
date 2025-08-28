@@ -10,7 +10,7 @@ from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
 from optuna_integration import LightGBMPruningCallback
 
-from utils.optuna_metrics import (
+from models.utils.optuna_metrics import (
     log_cv_curve,
     train_oof_and_log,
     log_feature_importance,
@@ -18,6 +18,7 @@ from utils.optuna_metrics import (
     log_data_profile,
     log_optuna_study,
 )
+
 
 # MLflow setup
 mlflow.set_tracking_uri("http://localhost:5500")

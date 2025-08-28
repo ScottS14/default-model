@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import pytest
-from credit_risk import clean as C
+from features import clean as C
 
 S = C.SENTINEL_365243  # 365243 sentinel
 

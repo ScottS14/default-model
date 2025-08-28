@@ -4,15 +4,15 @@ import json
 from pathlib import Path
 import pandas as pd
 
-from credit_risk.clean import (
+from clean import (
     clean_application, clean_bureau, clean_prev, clean_pos, clean_installments, 
     clean_cc
 )
-from credit_risk.feat_eng import (
+from feat_eng import (
     compute_app_ratios, aggregate_bureau, aggregate_prev,
     aggregate_pos, aggregate_installments, aggregate_cc
 )
-from credit_risk.splits import add_cv_folds, save_folds_table
+from splits import add_cv_folds, save_folds_table
 
 DF = pd.DataFrame
 
