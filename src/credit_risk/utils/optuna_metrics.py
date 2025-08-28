@@ -14,12 +14,19 @@ from optuna.visualization.matplotlib import (
 )
 
 def log_cv_curve(cv_res, name_prefix="cv"):
-    aucs = cv_res["valid auc-mean"]
-    stds = cv_res["valid auc-stdv"]
-    xs = list(range(1, len(aucs)+1))
+    aucs = np.asarray(cv_res["valid auc-mean"], dtype=float)
+    stds = np.asarray(cv_res.get("valid auc-stdv", np.zeros_like(aucs)), dtype=float)
+
+    xs = np.arange(1, len(aucs) + 1, dtype=int)
+
     plt.figure()
     plt.plot(xs, aucs, label="AUC (mean)")
-    plt.fill_between(xs, aucs - stds, aucs + stds, alpha=0.2, label="±1 std")
+
+    if stds.shape == aucs.shape and np.all(np.isfinite(stds)):
+        lower = aucs - stds
+        upper = aucs + stds
+        plt.fill_between(xs, lower, upper, alpha=0.2, label="±1 std")
+
     plt.xlabel("Boosting round")
     plt.ylabel("AUC")
     plt.title(f"{name_prefix} AUC over iterations")
