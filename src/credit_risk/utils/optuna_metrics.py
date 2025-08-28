@@ -1,6 +1,7 @@
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import os
 import mlflow
 from sklearn.metrics import roc_auc_score, precision_recall_curve, roc_curve, auc, f1_score, precision_score, recall_score
@@ -12,6 +13,16 @@ from optuna.visualization.matplotlib import (
     plot_optimization_history, plot_param_importances,
     plot_parallel_coordinate, plot_slice, plot_contour
 )
+
+def _ensure_dir(path):
+    os.makedirs(path, exist_ok=True)
+
+def _as_figure(ax_or_fig):
+    if isinstance(ax_or_fig, Figure):
+        return ax_or_fig
+    if hasattr(ax_or_fig, "figure"):
+        return ax_or_fig.figure
+    return plt.gcf()
 
 def log_cv_curve(cv_res, name_prefix="cv"):
     aucs = np.asarray(cv_res["valid auc-mean"], dtype=float)
@@ -64,7 +75,6 @@ def train_oof_and_log(best_params, X, y, folds, cat_cols):
         precision, recall, thr_pr = precision_recall_curve(y, oof)
         prauc = auc(recall, precision)
 
-        # Choose a threshold that maximizes F1 (optional)
         fprs, tprs, thr_roc = roc_curve(y, oof)
         f1s = [f1_score(y, (oof >= t).astype(int)) for t in thr_pr[:-1]]
         best_idx = int(np.argmax(f1s))
@@ -103,7 +113,6 @@ def log_feature_importance(model, X):
     fi.to_csv(fi_csv, index=False)
     mlflow.log_artifact(fi_csv, artifact_path="importance")
 
-    # Simple bar plot (top 30)
     top = fi.head(30)
     plt.figure(figsize=(8, 10))
     plt.barh(top["feature"][::-1], top["gain"][::-1])
@@ -137,10 +146,6 @@ def log_shap_plots(model, X_sample):
         mlflow.log_figure(plt.gcf(), f"figures/shap_dependence_{f}.png")
         plt.close()
 
-
-def _ensure_dir(path):
-    os.makedirs(path, exist_ok=True)
-
 def log_data_profile(X, y):
     _ensure_dir("data_profile")
     meta = {
@@ -158,22 +163,25 @@ def log_data_profile(X, y):
     mlflow.log_artifact("data_profile/missingness.csv")
 
 def log_optuna_study(study):
-    figs = [
-        ("figures/optuna/opt_history.png", plot_optimization_history(study)),
-        ("figures/optuna/param_importances.png", plot_param_importances(study)),
-        ("figures/optuna/parallel_coord.png", plot_parallel_coordinate(study)),
-        ("figures/optuna/slice.png", plot_slice(study)),
-        ("figures/optuna/contour.png", plot_contour(study)),
+    items = [
+        ("figures/optuna/opt_history.png", plot_optimization_history),
+        ("figures/optuna/param_importances.png", plot_param_importances),
+        ("figures/optuna/parallel_coord.png", plot_parallel_coordinate),
+        ("figures/optuna/slice.png", plot_slice),
+        ("figures/optuna/contour.png", plot_contour),
     ]
-    for path, fig in figs:
+    for path, fn in items:
+        ax_or_fig = fn(study)         
+        fig = _as_figure(ax_or_fig)   
         mlflow.log_figure(fig, path)
         plt.close(fig)
-    # table of trials
+
+    # Trials table
     df_trials = study.trials_dataframe(attrs=(
         "number","value","state","params","user_attrs","system_attrs",
         "datetime_start","datetime_complete","duration"
     ))
-    _ensure_dir("optuna")
+    os.makedirs("optuna", exist_ok=True)
     out = "optuna/trials.csv"
     df_trials.to_csv(out, index=False)
     mlflow.log_artifact(out)

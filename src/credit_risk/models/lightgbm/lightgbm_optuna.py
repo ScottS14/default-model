@@ -19,7 +19,6 @@ from credit_risk.utils.optuna_metrics import (
     log_optuna_study,
 )
 
-
 # MLflow setup
 mlflow.set_tracking_uri("http://localhost:5500")
 mlflow.set_experiment("default-model-optuna")
@@ -151,7 +150,7 @@ with mlflow.start_run(run_name="lgbm_cv_optuna_study"):
     mlflow.set_tag("task", "binary_classification")
     mlflow.set_tag("framework", "lightgbm")
 
-    study.optimize(objective, n_trials=50, show_progress_bar=False)  # adjust n_trials as needed
+    study.optimize(objective, n_trials=50, show_progress_bar=False)
 
     # Log Optuna visuals & trials table
     log_optuna_study(study)
