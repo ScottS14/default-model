@@ -6,9 +6,18 @@ import lightgbm as lgb
 import mlflow
 import mlflow.lightgbm as mllgb
 import optuna
-from optuna.pruners import MedianPruner, HyperbandPruner
+from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
 from optuna_integration import LightGBMPruningCallback
+
+from utils.optuna_metrics import (
+    log_cv_curve,
+    train_oof_and_log,
+    log_feature_importance,
+    log_shap_plots,
+    log_data_profile,
+    log_optuna_study,
+)
 
 # MLflow setup
 mlflow.set_tracking_uri("http://localhost:5500")
@@ -66,7 +75,6 @@ def objective(trial: optuna.Trial) -> float:
         "seed": 42,
     }
 
-    # GOSS is incompatible with bagging by rows; enforce a sane combo
     if params["boosting_type"] == "goss":
         params["bagging_fraction"] = 1.0
         params["bagging_freq"] = 0
@@ -93,6 +101,9 @@ def objective(trial: optuna.Trial) -> float:
             callbacks=callbacks,
             return_cvbooster=False,
         )
+
+        # Log learning curve for this trial
+        log_cv_curve(cv_res, name_prefix=f"trial_{trial.number}")
 
         # Extract the best AUC across rounds
         aucs = cv_res["valid auc-mean"]
@@ -135,13 +146,18 @@ with mlflow.start_run(run_name="lgbm_cv_optuna_study"):
     mlflow.log_param("optuna_pruner", "Hyperband")
     mlflow.log_param("cv_custom_folds", True)
     mlflow.log_param("n_folds", int(unique_folds.size))
+    mlflow.set_tag("dataset", "train_with_folds_lgbm.parquet")
+    mlflow.set_tag("task", "binary_classification")
+    mlflow.set_tag("framework", "lightgbm")
 
     study.optimize(objective, n_trials=50, show_progress_bar=False)  # adjust n_trials as needed
+
+    # Log Optuna visuals & trials table
+    log_optuna_study(study)
 
     best_trial = study.best_trial
     best_params = best_trial.params
 
-    # Respect the GOSS/bagging constraint again
     if best_params.get("boosting_type") == "goss":
         best_params["bagging_fraction"] = 1.0
         best_params["bagging_freq"] = 0
@@ -153,7 +169,6 @@ with mlflow.start_run(run_name="lgbm_cv_optuna_study"):
         "verbosity": -1,
     })
 
-    # Retrain CV to fetch best_iter for these params
     cv_res = lgb.cv(
         best_params,
         dtrain,
@@ -162,6 +177,8 @@ with mlflow.start_run(run_name="lgbm_cv_optuna_study"):
         callbacks=[lgb.early_stopping(stopping_rounds=200, verbose=False)],
         return_cvbooster=False,
     )
+    log_cv_curve(cv_res, name_prefix="final_params")
+
     aucs = cv_res["valid auc-mean"]
     best_iter = int(np.argmax(aucs)) + 1
     best_cv_auc = float(aucs[best_iter - 1])
@@ -172,6 +189,20 @@ with mlflow.start_run(run_name="lgbm_cv_optuna_study"):
 
     # Train final model at best_iter and log it
     final_model = lgb.train(best_params, dtrain, num_boost_round=best_iter)
+
+    oof = train_oof_and_log(best_params, X, y, folds, cat_cols)
+    log_feature_importance(final_model, X)
+
+
+    try:
+        X_sample = X.sample(min(10000, len(X)), random_state=42)
+        log_shap_plots(final_model, X_sample)
+    except Exception as e:
+        mlflow.log_text(str(e), "figures/shap_error.txt")
+
+    log_data_profile(X, y)
+
+    # Save a quick Optuna best summary file
     try:
         study_summary = {
             "best_trial_number": best_trial.number,
