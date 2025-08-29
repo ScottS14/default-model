@@ -212,3 +212,4 @@ data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 notebooks/sandbox/
+optuna_study_lightgbm.db

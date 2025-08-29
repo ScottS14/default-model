@@ -126,8 +126,8 @@ def objective(trial: optuna.Trial) -> float:
     return best_auc
 
 # Run the study
-study_name = "lgbm_optuna_auc"
-storage = None
+study_name = "lgbm_optuna_auc_2"
+storage = "sqlite:///optuna_study_lightgbm.db"
 
 sampler = TPESampler(seed=42, multivariate=True, group=True)
 pruner = HyperbandPruner(min_resource=100, max_resource=5000, reduction_factor=3)
@@ -137,7 +137,7 @@ study = optuna.create_study(
     storage=storage,
     direction="maximize",
     sampler=sampler,
-    pruner=pruner,
+    pruner=pruner
 )
 
 with mlflow.start_run(run_name="lgbm_cv_optuna_study"):
