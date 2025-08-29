@@ -1,137 +1,141 @@
-import os, numpy as np, pandas as pd, mlflow
-from sklearn.metrics import roc_auc_score
-from pytorch_tabnet.tab_model import TabNetClassifier
-import torch
+from __future__ import annotations
+import argparse
+import json
+from pathlib import Path
+import pandas as pd
 
-ID, TARGET = "SK_ID_CURR", "TARGET"
-DATA_PATH = "data/processed/train_with_folds_lgbm.parquet"
+from clean import (
+    clean_application, clean_bureau, clean_prev, clean_pos, clean_installments, 
+    clean_cc
+)
+from feat_eng import (
+    compute_app_ratios, aggregate_bureau, aggregate_prev,
+    aggregate_pos, aggregate_installments, aggregate_cc
+)
+from splits import add_cv_folds, save_folds_table
 
-def load_lgb_view(path):
-    df = pd.read_parquet(path)
-    if "fold" not in df.columns:
-        raise KeyError("Expected a 'fold' column.")
-    # keep valid folds
-    m = df["fold"].values >= 0
-    df = df.loc[m].reset_index(drop=True)
+DF = pd.DataFrame
 
-    # split X/y/folds
-    Xdf = df.drop(columns=[TARGET, ID, "fold"], errors="ignore").copy()
-    y = df[TARGET].astype(np.int64).values
-    folds = df["fold"].values
+# Build features
+def build_features(app_clean: DF, *, frames: dict[str, DF], include: tuple[str, ...]) -> DF:
+    X = app_clean.copy()
 
-    # build TabNet categorical spec
-    cat_cols = Xdf.select_dtypes(include=["category"]).columns.tolist()
-    cat_idxs, cat_dims = [], []
-    # make a dense numeric matrix, replacing categoricals by int codes
-    cols = Xdf.columns.tolist()
-    for i, c in enumerate(cols):
-        if c in cat_cols:
-            cat_idxs.append(i)
-            cat_dims.append(int(Xdf[c].cat.categories.size))  # cardinality
-            Xdf[c] = Xdf[c].cat.codes.astype("int64")  # -1 for NaN is fine
-        else:
-            # ensure numeric for non-cats
-            if Xdf[c].dtype == bool:
-                Xdf[c] = Xdf[c].astype("int64")
-            elif not np.issubdtype(Xdf[c].dtype, np.number):
-                Xdf[c] = pd.to_numeric(Xdf[c], errors="coerce")
+    if "app_ratios" in include:
+        X = compute_app_ratios(X)
 
-    Xdf = Xdf.fillna(0)
-    X = Xdf.values
-    return X, y, folds, cat_idxs, cat_dims
+    if "bureau" in include and {"bureau", "bb"} <= frames.keys():
+        X = X.merge(aggregate_bureau(frames["bureau"], frames["bb"]), on="SK_ID_CURR", how="left")
+    if "previous" in include and "prev" in frames:
+        X = X.merge(aggregate_prev(frames["prev"]), on="SK_ID_CURR", how="left")
+    if "install" in include and "ins" in frames:
+        X = X.merge(aggregate_installments(frames["ins"]), on="SK_ID_CURR", how="left")
+    if "pos" in include and "pos" in frames:
+        X = X.merge(aggregate_pos(frames["pos"]), on="SK_ID_CURR", how="left")
+    if "cc" in include and "cc" in frames:
+        X = X.merge(aggregate_cc(frames["cc"]), on="SK_ID_CURR", how="left")
 
-def run_cv(X, y, folds, cat_idxs, cat_dims, params, max_epochs=200, patience=20, verbose=0):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    aucs = []
-    uniq = np.sort(np.unique(folds))
-    last_model = None
+    return X
 
-    # choose embedding dim per cat (simple heuristic)
-    # pytorch-tabnet allows a single int or list; we’ll use a single int
-    cat_emb_dim = params.get("cat_emb_dim", 8)
+# Model-specific views
+def cast_lgbm_categoricals(df: DF) -> DF:
+    out = df.copy()
+    cat_cols = out.select_dtypes(include=["object", "bool"]).columns
+    for c in cat_cols:
+        out[c] = out[c].astype("category")
+    return out
 
-    for f in uniq:
-        val_idx = np.where(folds == f)[0]
-        trn_idx = np.where(folds != f)[0]
+def ohe_for_xgb(df: DF) -> DF:
+    cat_cols = df.select_dtypes(include=["object", "category", "bool"]).columns
+    # keep all levels; model will handle regularization
+    return pd.get_dummies(df, columns=cat_cols, drop_first=False, dummy_na=False)
 
-        X_tr, y_tr = X[trn_idx], y[trn_idx]
-        X_va, y_va = X[val_idx], y[val_idx]
+# CLI main
+def main(raw_dir: str, out_dir: str, include: list[str]) -> None:
+    raw = Path(raw_dir)
+    outp = Path(out_dir)
+    outp.mkdir(parents=True, exist_ok=True)
 
-        clf = TabNetClassifier(
-            n_d=params["n_d"], n_a=params["n_a"], n_steps=params["n_steps"],
-            gamma=params["gamma"], lambda_sparse=params["lambda_sparse"],
-            momentum=params["momentum"],
-            optimizer_fn=torch.optim.Adam,
-            optimizer_params=dict(lr=params["learning_rate"]),
-            scheduler_fn=torch.optim.lr_scheduler.StepLR,
-            scheduler_params={"step_size":50, "gamma":0.9},
-            mask_type="entmax",
-            cat_idxs=cat_idxs,
-            cat_dims=cat_dims,
-            cat_emb_dim=cat_emb_dim,
-            device_name=device,
-        )
+    # Load raw
+    app_train = pd.read_csv(raw / "application_train.csv")
+    app_test  = pd.read_csv(raw / "application_test.csv")
+    bureau    = pd.read_csv(raw / "bureau.csv")
+    bb        = pd.read_csv(raw / "bureau_balance.csv")
+    prev      = pd.read_csv(raw / "previous_application.csv")
+    pos       = pd.read_csv(raw / "POS_CASH_balance.csv")
+    ins       = pd.read_csv(raw / "installments_payments.csv")
+    cc        = pd.read_csv(raw / "credit_card_balance.csv")
 
-        clf.fit(
-            X_tr, y_tr,
-            eval_set=[(X_va, y_va)],
-            eval_name=["valid"], eval_metric=["auc"],
-            max_epochs=max_epochs, patience=patience,
-            batch_size=params["batch_size"], virtual_batch_size=params["virtual_batch_size"],
-            num_workers=0, drop_last=False, verbose=verbose
-        )
+    # Clean each table
+    app_tr_c = clean_application(app_train)
+    app_te_c = clean_application(app_test)
+    frames = {
+        "bureau": clean_bureau(bureau),
+        "bb":     bb,
+        "prev":   clean_prev(prev),
+        "pos":    clean_pos(pos),
+        "ins":    clean_installments(ins),
+        "cc":     clean_cc(cc),
+    }
 
-        y_hat = clf.predict_proba(X_va)[:, 1]
-        aucs.append(roc_auc_score(y_va, y_hat))
-        last_model = clf
+    # Build features (toggle via --include)
+    include_tup = tuple(include)
+    X_train = build_features(app_tr_c, frames=frames, include=include_tup)
+    X_test  = build_features(app_te_c, frames=frames, include=include_tup)
 
-    return float(np.mean(aucs)), float(np.std(aucs)), last_model
+    # Split out TARGET
+    y = X_train["TARGET"] if "TARGET" in X_train.columns else None
+    if y is not None:
+        X_train = X_train.drop(columns=["TARGET"])
 
-def main(data_path=DATA_PATH, out_dir="./runs/tabnet_lgb_view"):
-    os.makedirs(out_dir, exist_ok=True)
+    # LGBM view
+    lgb_train = cast_lgbm_categoricals(X_train)
+    lgb_test  = cast_lgbm_categoricals(X_test)
+    if y is not None:
+        lgb_train["TARGET"] = y.values
 
-    # MLflow: Drive in Colab; local file store otherwise
-    mlruns_uri = "file:/content/drive/MyDrive/mlruns" if os.path.exists("/content") else "file:./mlruns"
-    mlflow.set_tracking_uri(mlruns_uri)
-    mlflow.set_experiment("tabnet-baseline")
+    # persist
+    lgb_train.to_parquet(outp / "train_features_lgbm.parquet", index=False)
+    lgb_test.to_parquet(outp / "test_features_lgbm.parquet", index=False)
 
-    X, y, folds, cat_idxs, cat_dims = load_lgb_view(data_path)
+    # add reusable folds (only on train)
+    if y is not None:
+        lgb_with_folds = add_cv_folds(lgb_train, y_col="TARGET", n_splits=5, seed=42)
+        lgb_with_folds.to_parquet(outp / "train_with_folds_lgbm.parquet", index=False)
+        # save a small fold map keyed by SK_ID_CURR
+        if "SK_ID_CURR" in lgb_with_folds.columns:
+            save_folds_table(
+                ids=lgb_with_folds["SK_ID_CURR"], 
+                fold=lgb_with_folds["fold"], 
+                path=outp / "folds_by_sk_id.parquet"
+            )
 
-    params = dict(
-        n_d=32, n_a=32, n_steps=5, gamma=1.5,
-        lambda_sparse=1e-4, momentum=0.02,
-        learning_rate=2e-3, batch_size=2048, virtual_batch_size=256,
-        cat_emb_dim=8,  # tweakable
+    # XGB view 
+    xgb_train = ohe_for_xgb(X_train)
+    xgb_test  = ohe_for_xgb(X_test)
+    xgb_train, xgb_test = xgb_train.align(xgb_test, join="outer", axis=1, fill_value=0)
+
+    # ensure TARGET only on train
+    if y is not None:
+        xgb_train["TARGET"] = y.values
+        xgb_test.drop(columns=["TARGET"], errors="ignore", inplace=True)
+
+    # persist + save OHE columns for reproducibility
+    xgb_train.to_parquet(outp / "train_features_xgb.parquet", index=False)
+    xgb_test.to_parquet(outp / "test_features_xgb.parquet", index=False)
+    (outp / "xgb_columns.json").write_text(
+        json.dumps({"columns": list(xgb_train.drop(columns=["TARGET"], 
+                                                   errors="ignore").columns)}, 
+                                                   indent=2)
     )
 
-    with mlflow.start_run(run_name="tabnet_cv_lgb_view"):
-        mlflow.log_params({
-            **params,
-            "n_features": int(X.shape[1]),
-            "n_rows": int(X.shape[0]),
-            "cv_folds": int(np.unique(folds).size),
-            "cv_custom_folds": True,
-            "n_cats": len(cat_idxs),
-        })
-        mean_auc, std_auc, model = run_cv(
-            X, y, folds, cat_idxs, cat_dims, params,
-            max_epochs=200, patience=20, verbose=0
-        )
-        mlflow.log_metric("auc_mean", mean_auc)
-        mlflow.log_metric("auc_std", std_auc)
-
-        # Save weights (reload by reconstructing model with same params/cat spec)
-        torch.save(model.network.state_dict(), os.path.join(out_dir, "tabnet_state.pt"))
-        mlflow.log_artifact(os.path.join(out_dir, "tabnet_state.pt"), artifact_path="model")
-        with open(os.path.join(out_dir, "cat_spec.json"), "w") as f:
-            import json
-            json.dump({"cat_idxs": cat_idxs, "cat_dims": cat_dims}, f)
-        mlflow.log_artifact(os.path.join(out_dir, "cat_spec.json"))
-
 if __name__ == "__main__":
-    import argparse
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--data", type=str, default=DATA_PATH)
-    ap.add_argument("--out_dir", type=str, default="./runs/tabnet_lgb_view")
-    args = ap.parse_args()
-    main(args.data, args.out_dir)
+    p = argparse.ArgumentParser()
+    p.add_argument("--raw-dir", default="data/raw/home_credit")
+    p.add_argument("--out-dir", default="data/processed")
+    p.add_argument(
+        "--include", nargs="*", default=["app_ratios", "bureau", "previous", 
+                                         "install", "pos", "cc"],
+        help="Feature blocks to include (e.g. app_ratios bureau previous)"
+    )
+    args = p.parse_args()
+    main(args.raw_dir, args.out_dir, args.include)
