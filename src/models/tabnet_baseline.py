@@ -1,43 +1,41 @@
-import os, numpy as np, pandas as pd, mlflow
+import os, numpy as np, pandas as pd, mlflow, torch
 from sklearn.metrics import roc_auc_score
 from pytorch_tabnet.tab_model import TabNetClassifier
-import torch
 
 ID, TARGET = "SK_ID_CURR", "TARGET"
 DATA_PATH = "data/processed/train_with_folds_lgbm.parquet"
 
-def load_lgb_view(path):
-    df = pd.read_parquet(path)
-    if "fold" not in df.columns:
-        raise KeyError("Expected a 'fold' column.")
-    # keep valid folds
-    m = df["fold"].values >= 0
-    df = df.loc[m].reset_index(drop=True)
-
-    # split X/y/folds
-    Xdf = df.drop(columns=[TARGET, ID, "fold"], errors="ignore").copy()
-    y = df[TARGET].astype(np.int64).values
-    folds = df["fold"].values
-
-    # build TabNet categorical spec
+def encode_cats_no_negatives(Xdf):
     cat_cols = Xdf.select_dtypes(include=["category"]).columns.tolist()
     cat_idxs, cat_dims = [], []
-    # make a dense numeric matrix, replacing categoricals by int codes
     cols = Xdf.columns.tolist()
     for i, c in enumerate(cols):
         if c in cat_cols:
+            codes = Xdf[c].cat.codes.astype("int64")
+            # replace -1 (NaN) with new category id
+            codes = np.where(codes < 0, len(Xdf[c].cat.categories), codes)
+            Xdf[c] = codes
             cat_idxs.append(i)
-            cat_dims.append(int(Xdf[c].cat.categories.size))  # cardinality
-            Xdf[c] = Xdf[c].cat.codes.astype("int64")  # -1 for NaN is fine
+            cat_dims.append(int(Xdf[c].max()) + 1)
         else:
-            # ensure numeric for non-cats
             if Xdf[c].dtype == bool:
                 Xdf[c] = Xdf[c].astype("int64")
             elif not np.issubdtype(Xdf[c].dtype, np.number):
                 Xdf[c] = pd.to_numeric(Xdf[c], errors="coerce")
+    return Xdf.fillna(0), cat_idxs, cat_dims
 
-    Xdf = Xdf.fillna(0)
-    X = Xdf.values
+def load_data(path):
+    df = pd.read_parquet(path)
+    if "fold" not in df.columns:
+        raise KeyError("Expected a 'fold' column.")
+    df = df.loc[df["fold"].values >= 0].reset_index(drop=True)
+
+    Xdf = df.drop(columns=[TARGET, ID, "fold"], errors="ignore").copy()
+    y = df[TARGET].astype(np.int64).values
+    folds = df["fold"].values
+
+    Xdf, cat_idxs, cat_dims = encode_cats_no_negatives(Xdf)
+    X = Xdf.astype(np.float32).values
     return X, y, folds, cat_idxs, cat_dims
 
 def run_cv(X, y, folds, cat_idxs, cat_dims, params, max_epochs=200, patience=20, verbose=0):
@@ -45,10 +43,6 @@ def run_cv(X, y, folds, cat_idxs, cat_dims, params, max_epochs=200, patience=20,
     aucs = []
     uniq = np.sort(np.unique(folds))
     last_model = None
-
-    # choose embedding dim per cat (simple heuristic)
-    # pytorch-tabnet allows a single int or list; we’ll use a single int
-    cat_emb_dim = params.get("cat_emb_dim", 8)
 
     for f in uniq:
         val_idx = np.where(folds == f)[0]
@@ -66,9 +60,8 @@ def run_cv(X, y, folds, cat_idxs, cat_dims, params, max_epochs=200, patience=20,
             scheduler_fn=torch.optim.lr_scheduler.StepLR,
             scheduler_params={"step_size":50, "gamma":0.9},
             mask_type="entmax",
-            cat_idxs=cat_idxs,
-            cat_dims=cat_dims,
-            cat_emb_dim=cat_emb_dim,
+            cat_idxs=cat_idxs, cat_dims=cat_dims,
+            cat_emb_dim=params["cat_emb_dim"],
             device_name=device,
         )
 
@@ -78,33 +71,34 @@ def run_cv(X, y, folds, cat_idxs, cat_dims, params, max_epochs=200, patience=20,
             eval_name=["valid"], eval_metric=["auc"],
             max_epochs=max_epochs, patience=patience,
             batch_size=params["batch_size"], virtual_batch_size=params["virtual_batch_size"],
-            num_workers=0, drop_last=False, verbose=verbose
+            num_workers=0, drop_last=False
         )
 
         y_hat = clf.predict_proba(X_va)[:, 1]
-        aucs.append(roc_auc_score(y_va, y_hat))
+        auc = roc_auc_score(y_va, y_hat)
+        aucs.append(auc)
         last_model = clf
 
     return float(np.mean(aucs)), float(np.std(aucs)), last_model
 
-def main(data_path=DATA_PATH, out_dir="./runs/tabnet_lgb_view"):
+def main(data_path=DATA_PATH, out_dir="./runs/tabnet_cv_baseline"):
     os.makedirs(out_dir, exist_ok=True)
 
-    # MLflow: Drive in Colab; local file store otherwise
+    # MLflow storage
     mlruns_uri = "file:/content/drive/MyDrive/mlruns" if os.path.exists("/content") else "file:./mlruns"
     mlflow.set_tracking_uri(mlruns_uri)
     mlflow.set_experiment("tabnet-baseline")
 
-    X, y, folds, cat_idxs, cat_dims = load_lgb_view(data_path)
+    X, y, folds, cat_idxs, cat_dims = load_data(data_path)
 
     params = dict(
-        n_d=32, n_a=32, n_steps=5, gamma=1.5,
-        lambda_sparse=1e-4, momentum=0.02,
-        learning_rate=2e-3, batch_size=2048, virtual_batch_size=256,
-        cat_emb_dim=8,  # tweakable
+        n_d=16, n_a=16, n_steps=3, gamma=1.3,
+        lambda_sparse=1e-5, momentum=0.02,
+        learning_rate=2e-3, batch_size=1024, virtual_batch_size=128,
+        cat_emb_dim=8,
     )
 
-    with mlflow.start_run(run_name="tabnet_cv_lgb_view"):
+    with mlflow.start_run(run_name="tabnet_cv_baseline"):
         mlflow.log_params({
             **params,
             "n_features": int(X.shape[1]),
@@ -113,18 +107,20 @@ def main(data_path=DATA_PATH, out_dir="./runs/tabnet_lgb_view"):
             "cv_custom_folds": True,
             "n_cats": len(cat_idxs),
         })
+
         mean_auc, std_auc, model = run_cv(
             X, y, folds, cat_idxs, cat_dims, params,
             max_epochs=200, patience=20, verbose=0
         )
+
         mlflow.log_metric("auc_mean", mean_auc)
         mlflow.log_metric("auc_std", std_auc)
 
-        # Save weights (reload by reconstructing model with same params/cat spec)
+        # save model weights + cat spec
         torch.save(model.network.state_dict(), os.path.join(out_dir, "tabnet_state.pt"))
         mlflow.log_artifact(os.path.join(out_dir, "tabnet_state.pt"), artifact_path="model")
+        import json
         with open(os.path.join(out_dir, "cat_spec.json"), "w") as f:
-            import json
             json.dump({"cat_idxs": cat_idxs, "cat_dims": cat_dims}, f)
         mlflow.log_artifact(os.path.join(out_dir, "cat_spec.json"))
 
@@ -132,6 +128,6 @@ if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", type=str, default=DATA_PATH)
-    ap.add_argument("--out_dir", type=str, default="./runs/tabnet_lgb_view")
+    ap.add_argument("--out_dir", type=str, default="./runs/tabnet_cv_baseline")
     args = ap.parse_args()
     main(args.data, args.out_dir)
