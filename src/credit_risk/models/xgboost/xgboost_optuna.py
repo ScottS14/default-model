@@ -21,12 +21,15 @@ from credit_risk.utils.optuna_metrics_xgb import (
     log_optuna_study,
 )
 
+# MLflow setup
 mlflow.set_tracking_uri("http://localhost:5500")
 mlflow.set_experiment("default-model-optuna")
 
+# Constants
 ID = "SK_ID_CURR"
 TARGET = "TARGET"
 
+# Load data
 df = pd.read_parquet("data/processed/train_features_xgb.parquet")
 fold_id = pd.read_parquet("data/processed/folds_by_sk_id.parquet")
 
@@ -38,6 +41,7 @@ df_with_folds = fold_id.merge(df, how="left", on=ID)
 if "fold" not in df_with_folds.columns:
     raise KeyError("Expected a 'fold' column with precomputed fold IDs in the merged dataframe.")
 
+# Prepare X, y, folds
 X = df_with_folds.drop(columns=[TARGET, ID, "fold"], errors="ignore")
 for c in X.columns:
     if X[c].dtype == bool:
@@ -61,33 +65,55 @@ for f in unique_folds:
     trn_idx = np.where(fold_vals != f)[0]
     folds.append((trn_idx, val_idx))
 
+
+# DMatrix (CSR for efficiency)
 X_csr = sp.csr_matrix(X.values)
 feature_names = X.columns.tolist()
 dtrain = xgb.DMatrix(X_csr, label=y, feature_names=feature_names)
 
+
+# Helper: detect xgb.cv result column keys
 def _detect_cv_keys(trial, params):
-    probe = xgb.cv(params=params, dtrain=dtrain, folds=folds, num_boost_round=1, verbose_eval=False, seed=42)
+    probe = xgb.cv(
+        params=params,
+        dtrain=dtrain,
+        folds=folds,
+        num_boost_round=1,
+        verbose_eval=False,
+        seed=42
+    )
     cols = list(probe.columns)
     print(f"[trial {trial.number}] xgb.cv columns: {cols}")
     try:
         mlflow.log_text(str(cols), f"trial_{trial.number}_cv_columns.txt")
     except Exception:
         pass
-    for base in ["test-auc", "validation-auc", "test-aucpr", "validation-aucpr"]:
+
+    for base in ["test-aucpr", "validation-aucpr", "test-auc", "validation-auc"]:
         mean_k, std_k = f"{base}-mean", f"{base}-std"
         if mean_k in probe.columns:
             return mean_k, (std_k if std_k in probe.columns else None), base
+
+    # Fallback: heuristic search
     for c in cols:
         if ("test" in c or "validation" in c) and ("auc" in c):
             base = c.split("-mean")[0].split("-std")[0]
             stdk = c.replace("-mean", "-std") if c.endswith("-mean") else None
             return c, stdk, base
+
     return None, None, None
 
+# Class ratio for scale_pos_weight tuning
+pos = float(y.sum())
+neg = float(len(y) - pos)
+base_spw = max(neg / max(pos, 1.0), 1.0)
+
+# Optuna objective (optimize PR-AUC)
 def objective(trial: optuna.Trial) -> float:
+    # Lock eval_metric to PR-AUC for credit risk
     params = {
         "objective": "binary:logistic",
-        "eval_metric": trial.suggest_categorical("eval_metric", ["auc", "aucpr"]),
+        "eval_metric": "aucpr",
         "tree_method": "hist",
         "max_depth": trial.suggest_int("max_depth", 3, 12),
         "min_child_weight": trial.suggest_float("min_child_weight", 1e-1, 10.0, log=True),
@@ -97,7 +123,9 @@ def objective(trial: optuna.Trial) -> float:
         "alpha": trial.suggest_float("alpha", 1e-8, 10.0, log=True),
         "eta": trial.suggest_float("eta", 0.005, 0.1, log=True),
         "gamma": trial.suggest_float("gamma", 0.0, 5.0),
-        "scale_pos_weight": trial.suggest_float("scale_pos_weight", 0.5, 10.0, log=True),
+        "scale_pos_weight": trial.suggest_float(
+            "scale_pos_weight", 0.5 * base_spw, 2.0 * base_spw, log=True
+        ),
         "seed": 42,
     }
 
@@ -109,6 +137,7 @@ def objective(trial: optuna.Trial) -> float:
             "cv_folds": int(unique_folds.size),
             "cv_custom_folds": True,
             "dtype": "float32",
+            "base_scale_pos_weight": base_spw,
         })
 
         metric_key, std_key, prune_base = _detect_cv_keys(trial, params)
@@ -116,6 +145,7 @@ def objective(trial: optuna.Trial) -> float:
             mlflow.log_text("Could not detect CV metric key.", f"errors/trial_{trial.number}_metric_key.txt")
             raise optuna.TrialPruned()
 
+        # Set up pruning callback keyed to detected metric base (e.g., "test-aucpr")
         callbacks = []
         try:
             callbacks = [XGBoostPruningCallback(trial, prune_base)]
@@ -123,6 +153,7 @@ def objective(trial: optuna.Trial) -> float:
             mlflow.log_text(str(e), f"errors/trial_{trial.number}_prune_setup.txt")
             callbacks = []
 
+        # Run CV
         try:
             cv_res = xgb.cv(
                 params=params,
@@ -135,6 +166,7 @@ def objective(trial: optuna.Trial) -> float:
                 seed=42,
             )
         except KeyError as e:
+            # In case pruning key mismatches, rerun without pruning
             mlflow.log_text(f"Pruning key mismatch: {e}", f"errors/trial_{trial.number}_prune_keyerror.txt")
             cv_res = xgb.cv(
                 params=params,
@@ -146,29 +178,38 @@ def objective(trial: optuna.Trial) -> float:
                 seed=42,
             )
 
+        # Log CV curve artifact
         xgb_log_cv_curve(cv_res, name_prefix=f"trial_{trial.number}", metric_key=metric_key)
 
-        aucs = cv_res[metric_key].astype(float)
-        stds = (cv_res[std_key].astype(float) if std_key and std_key in cv_res.columns
-                else pd.Series(np.zeros(len(aucs)), index=aucs.index))
+        # Extract the metric to maximize (PR-AUC mean over rounds)
+        metrics = cv_res[metric_key].astype(float)
+        stds = (
+            cv_res[std_key].astype(float)
+            if std_key and std_key in cv_res.columns
+            else pd.Series(np.zeros(len(metrics)), index=metrics.index)
+        )
 
-        best_idx = int(aucs.idxmax())
+        best_idx = int(metrics.idxmax())
         best_iter = best_idx + 1
-        best_auc = float(aucs.iloc[best_idx])
+        best_metric = float(metrics.iloc[best_idx])
         best_std = float(stds.iloc[best_idx])
 
-        mlflow.log_metric("auc_mean", best_auc)
-        mlflow.log_metric("auc_std", best_std)
+        # Consistent metric logging (PR-AUC)
+        metric_name = "aucpr"
+        mlflow.log_metric(f"{metric_name}_mean", best_metric)
+        mlflow.log_metric(f"{metric_name}_std", best_std)
         mlflow.log_metric("best_iter", best_iter)
 
-        for i, v in enumerate(aucs, start=1):
+        # Report intermediate values per boosting round for pruning
+        for i, v in enumerate(metrics, start=1):
             trial.report(float(v), step=i)
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
-    return best_auc
+    return best_metric  
 
-study_name = "xgb_optuna_auc_2"
+# Optuna study setup
+study_name = "xgb_optuna_aucpr"
 storage = "sqlite:///optuna_study_xgboost.db"
 
 sampler = TPESampler(seed=42, multivariate=True, group=True)
@@ -182,6 +223,7 @@ study = optuna.create_study(
     pruner=pruner,
 )
 
+# Optimize
 with mlflow.start_run(run_name="xgboost_cv_optuna_study"):
     mlflow.log_param("optuna_sampler", "TPE")
     mlflow.log_param("optuna_pruner", "Hyperband")
@@ -190,21 +232,25 @@ with mlflow.start_run(run_name="xgboost_cv_optuna_study"):
     mlflow.set_tag("dataset", "train_features_xgb.parquet")
     mlflow.set_tag("task", "binary_classification")
     mlflow.set_tag("framework", "xgboost")
+    mlflow.set_tag("primary_metric", "aucpr")
 
     study.optimize(objective, n_trials=50, show_progress_bar=False, catch=(Exception,))
 
+    # Log Optuna study summary/artifacts
     log_optuna_study(study)
 
+    # Re-run CV with best params
     best_trial = study.best_trial
     best_params = best_trial.params.copy()
     best_params.update({
         "objective": "binary:logistic",
-        "eval_metric": best_params.get("eval_metric", "auc"),
+        "eval_metric": "aucpr",   
         "tree_method": "hist",
         "seed": 42,
     })
 
     mk, sk, _ = _detect_cv_keys(best_trial, best_params)
+
     cv_res = xgb.cv(
         params=best_params,
         dtrain=dtrain,
@@ -214,22 +260,27 @@ with mlflow.start_run(run_name="xgboost_cv_optuna_study"):
         verbose_eval=False,
         seed=42,
     )
+
     if mk is None or mk not in cv_res.columns:
         mlflow.log_text(str(list(cv_res.columns)), "errors/final_cv_cols.txt")
         raise RuntimeError("Could not locate CV metric column.")
+
     xgb_log_cv_curve(cv_res, name_prefix="final_params", metric_key=mk)
 
-    aucs = cv_res[mk].astype(float)
-    best_idx = int(aucs.idxmax())
+    metrics = cv_res[mk].astype(float)
+    best_idx = int(metrics.idxmax())
     best_iter = best_idx + 1
-    best_cv_auc = float(aucs.iloc[best_idx])
+    best_cv_aucpr = float(metrics.iloc[best_idx])
 
+    # Log final/best params and metric
     mlflow.log_params({f"best_{k}": v for k, v in best_params.items()})
-    mlflow.log_metric("best_cv_auc", best_cv_auc)
+    mlflow.log_metric("best_cv_aucpr", best_cv_aucpr)
     mlflow.log_metric("best_iter", best_iter)
 
+    # Train final model on full data
     final_model = xgb.train(params=best_params, dtrain=dtrain, num_boost_round=best_iter)
 
+    # OOF, feature importance, SHAP, data profile via your utils
     xgb_train_oof_and_log(best_params, X, y, folds)
     xgb_log_feature_importance(final_model, feature_names)
 
@@ -241,8 +292,13 @@ with mlflow.start_run(run_name="xgboost_cv_optuna_study"):
 
     log_data_profile(X, y)
 
+    # Save best trial summary as artifact
     try:
-        summary = {"best_trial_number": best_trial.number, "best_value": best_trial.value, "best_params": best_params}
+        summary = {
+            "best_trial_number": best_trial.number,
+            "best_value_aucpr": best_trial.value,
+            "best_params": best_params
+        }
         tmp_path = os.path.join(tempfile.gettempdir(), "optuna_best_xgb.json")
         with open(tmp_path, "w") as f:
             json.dump(summary, f, indent=2)
@@ -250,4 +306,5 @@ with mlflow.start_run(run_name="xgboost_cv_optuna_study"):
     except Exception:
         pass
 
+    # Log the model
     mlxgb.log_model(final_model, artifact_path="model")
