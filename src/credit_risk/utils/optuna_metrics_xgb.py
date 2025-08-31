@@ -6,6 +6,27 @@ import pandas as pd
 import shap
 import mlflow
 import xgboost as xgb
+from matplotlib.figure import Figure
+
+def _as_figure(obj) -> Figure:
+    if isinstance(obj, Figure):
+        return obj
+    # Single Axes
+    if hasattr(obj, "get_figure"):
+        return obj.get_figure()
+    # Array of Axes / Figures
+    if isinstance(obj, np.ndarray) and obj.size > 0:
+        first = obj.flat[0]
+        if hasattr(first, "get_figure"):
+            return first.get_figure()
+        if isinstance(first, Figure):
+            return first
+    raise TypeError(f"Unsupported figure object type: {type(obj)}")
+
+def _log_matplotlib(obj, path: str):
+    fig = _as_figure(obj)
+    mlflow.log_figure(fig, path)
+    plt.close(fig)
 
 from optuna.visualization.matplotlib import (
     plot_optimization_history, plot_param_importances,
@@ -114,8 +135,15 @@ def log_optuna_study(study):
         ("figures/optuna/contour.png", plot_contour),
     ]
     for path, fn in figs:
-        ax_or_fig = fn(study)
-        fig = ax_or_fig.figure if hasattr(ax_or_fig, "figure") else ax_or_fig
-        mlflow.log_figure(fig, path); plt.close(fig)
-    df_trials = study.trials_dataframe(attrs=("number","value","state","params","datetime_start","datetime_complete","duration"))
-    out = "optuna_trials_xgb.csv"; df_trials.to_csv(out, index=False); mlflow.log_artifact(out)
+        try:
+            obj = fn(study)
+            _log_matplotlib(obj, path)
+        except Exception as e:
+            mlflow.log_text(str(e), path.replace(".png", "_error.txt"))
+
+    df_trials = study.trials_dataframe(
+        attrs=("number","value","state","params","datetime_start","datetime_complete","duration")
+    )
+    out = "optuna_trials_xgb.csv"
+    df_trials.to_csv(out, index=False)
+    mlflow.log_artifact(out)
