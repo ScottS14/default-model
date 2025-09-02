@@ -10,7 +10,7 @@ from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
 from optuna_integration import LightGBMPruningCallback
 
-from credit_risk.utils.optuna_metrics import (
+from credit_risk.utils.optuna_metrics_lgbm import (
     log_cv_curve,
     train_oof_and_log,
     log_feature_importance,
