@@ -1,37 +1,21 @@
+from __future__ import annotations
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import numpy as np
 import pandas as pd
 import shap
 import mlflow
 import xgboost as xgb
-from matplotlib.figure import Figure
 
-def _as_figure(obj) -> Figure:
-    if isinstance(obj, Figure):
-        return obj
-    # Single Axes
-    if hasattr(obj, "get_figure"):
-        return obj.get_figure()
-    # Array of Axes / Figures
-    if isinstance(obj, np.ndarray) and obj.size > 0:
-        first = obj.flat[0]
-        if hasattr(first, "get_figure"):
-            return first.get_figure()
-        if isinstance(first, Figure):
-            return first
-    raise TypeError(f"Unsupported figure object type: {type(obj)}")
+from credit_risk.utils.optuna_common import log_study_figures, export_trials_csv, _as_figure
 
 def _log_matplotlib(obj, path: str):
     fig = _as_figure(obj)
     mlflow.log_figure(fig, path)
     plt.close(fig)
-
-from optuna.visualization.matplotlib import (
-    plot_optimization_history, plot_param_importances,
-    plot_parallel_coordinate, plot_slice, plot_contour
-)
 
 def xgb_log_cv_curve(cv_df: pd.DataFrame, name_prefix: str = "cv", metric_key: str | None = None):
     if metric_key is None:
@@ -75,6 +59,7 @@ def xgb_train_oof_and_log(params: dict, X: pd.DataFrame, y: np.ndarray, folds: l
                 fig = plt.figure(); plt.plot(rc,pr); plt.xlabel("Recall"); plt.ylabel("Precision"); plt.title(f"Fold {fi} PR")
                 mlflow.log_figure(fig, f"figures/fold_{fi}_pr.png"); plt.close(fig)
         if len(np.unique(y)) > 1:
+            from sklearn.metrics import roc_auc_score, precision_recall_curve, roc_curve, auc, f1_score
             fpr,tpr,_ = roc_curve(y, oof)
             pr,rc,thr = precision_recall_curve(y, oof)
             f1s = [f1_score(y, (oof>=t).astype(int)) for t in thr[:-1]] if len(thr)>1 else [0.0]
@@ -127,23 +112,5 @@ def log_data_profile(X: pd.DataFrame, y: np.ndarray):
     mlflow.log_artifact("data_profile_summary.csv")
 
 def log_optuna_study(study):
-    figs = [
-        ("figures/optuna/opt_history.png", plot_optimization_history),
-        ("figures/optuna/param_importances.png", plot_param_importances),
-        ("figures/optuna/parallel_coord.png", plot_parallel_coordinate),
-        ("figures/optuna/slice.png", plot_slice),
-        ("figures/optuna/contour.png", plot_contour),
-    ]
-    for path, fn in figs:
-        try:
-            obj = fn(study)
-            _log_matplotlib(obj, path)
-        except Exception as e:
-            mlflow.log_text(str(e), path.replace(".png", "_error.txt"))
-
-    df_trials = study.trials_dataframe(
-        attrs=("number","value","state","params","datetime_start","datetime_complete","duration")
-    )
-    out = "optuna_trials_xgb.csv"
-    df_trials.to_csv(out, index=False)
-    mlflow.log_artifact(out)
+    log_study_figures(study, prefix="figures/optuna_xgb")
+    export_trials_csv(study, path="optuna/xgb_trials.csv")
