@@ -213,3 +213,4 @@ data/processed/*
 !data/processed/.gitkeep
 notebooks/sandbox/
 optuna_study_lightgbm.db
+optuna_study_xgboost.db
