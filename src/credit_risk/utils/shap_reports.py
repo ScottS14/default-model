@@ -39,6 +39,24 @@ def _sanitize_lgbm_params(p: dict) -> tuple[dict, int]:
 
     return p, num_boost_round
 
+def _sanitize_xgb_params(p: dict) -> tuple[dict, int]:
+    p = _unwrap_best_params(p).copy()
+    num_boost_round = int(p.pop("n_estimators", p.pop("num_boost_round", 1000)))
+
+    for k in ("best_params","best_value","best_value_aucpr","best_trial_number","study","direction"):
+        p.pop(k, None)
+
+    if "learning_rate" in p and "eta" not in p:
+        p["eta"] = p.pop("learning_rate")
+    if "reg_alpha" in p and "alpha" not in p:
+        p["alpha"] = p.pop("reg_alpha")
+    if "reg_lambda" in p and "lambda" not in p:
+        p["lambda"] = p.pop("reg_lambda")
+
+    p.setdefault("objective", "binary:logistic")
+    p.setdefault("eval_metric", "aucpr")
+    return p, num_boost_round
+
 
 def _load_best_params(path: str) -> dict:
     with open(path, "r") as f:
@@ -57,8 +75,9 @@ def _fit_lgbm(X: pd.DataFrame, y: np.ndarray, params: dict):
     return booster
 
 def _fit_xgb(X: pd.DataFrame, y: np.ndarray, params: dict):
+    clean_params, num_boost_round = _sanitize_xgb_params(params)
     dtr = xgb.DMatrix(X.values, label=y, feature_names=X.columns.tolist())
-    booster = xgb.train(params, dtr, num_boost_round=int(params.get("n_estimators", 1000)))
+    booster = xgb.train(clean_params, dtr, num_boost_round=num_boost_round)
     return booster
 
 def _predict(model, X: pd.DataFrame) -> np.ndarray:
