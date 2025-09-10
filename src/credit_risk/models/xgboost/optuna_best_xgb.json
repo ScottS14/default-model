@@ -1,0 +1,19 @@
+{
+  "best_trial_number": 13,
+  "best_value_aucpr": 0.2742547154335519,
+  "best_params": {
+    "max_depth": 4,
+    "min_child_weight": 1.067790007831429,
+    "subsample": 0.9150317864680074,
+    "colsample_bytree": 0.7813856939417118,
+    "lambda": 3.536957936746935e-07,
+    "alpha": 1.0502784552134519,
+    "eta": 0.011929628862140301,
+    "gamma": 3.2602660068790703,
+    "scale_pos_weight": 7.84186894378666,
+    "objective": "binary:logistic",
+    "eval_metric": "aucpr",
+    "tree_method": "hist",
+    "seed": 42
+  }
+}

@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, json, os, random
+import argparse, json, os
 import numpy as np
 import pandas as pd
 import shap
@@ -17,14 +17,43 @@ try:
 except ImportError:
     xgb = None
 
+
+def _unwrap_best_params(p: dict) -> dict:
+    return p.get("best_params", p)
+
+def _sanitize_lgbm_params(p: dict) -> tuple[dict, int]:
+    p = _unwrap_best_params(p).copy()
+
+    num_boost_round = int(p.pop("n_estimators", 1000))
+
+    if "n_jobs" in p:
+        p["num_threads"] = int(p.pop("n_jobs"))
+
+    for k in ["best_params", "best_score", "study", "eval_metric"]:  # lgb uses "metric"
+        p.pop(k, None)
+
+    for k in ["tree_method", "max_depth_growth", "gamma"]:
+        p.pop(k, None)
+
+    p.setdefault("objective", "binary")
+
+    return p, num_boost_round
+
+
 def _load_best_params(path: str) -> dict:
     with open(path, "r") as f:
         return json.load(f)
 
 def _fit_lgbm(X: pd.DataFrame, y: np.ndarray, params: dict):
-    cat_cols = [c for c in X.columns if str(X[c].dtype) in ("category", "object", "bool")]
-    dtr = lgb.Dataset(X, label=y, categorical_feature=cat_cols, free_raw_data=False)
-    booster = lgb.train(params, dtr, num_boost_round=int(params.get("n_estimators", 1000)))
+    Xc = X.copy()
+    cat_cols = [c for c in Xc.columns if Xc[c].dtype == "object" or Xc[c].dtype == bool or isinstance(Xc[c].dtype, pd.Categorical)]
+    for c in cat_cols:
+        if not isinstance(Xc[c].dtype, pd.CategoricalDtype):
+            Xc[c] = Xc[c].astype("category")
+
+    clean_params, num_boost_round = _sanitize_lgbm_params(params)
+    dtr = lgb.Dataset(Xc, label=y, categorical_feature=cat_cols, free_raw_data=False)
+    booster = lgb.train(clean_params, dtr, num_boost_round=num_boost_round)
     return booster
 
 def _fit_xgb(X: pd.DataFrame, y: np.ndarray, params: dict):
@@ -35,7 +64,11 @@ def _fit_xgb(X: pd.DataFrame, y: np.ndarray, params: dict):
 def _predict(model, X: pd.DataFrame) -> np.ndarray:
     # LightGBM Booster
     if lgb is not None and isinstance(model, lgb.Booster):
-        return model.predict(X)
+        Xc = X.copy()
+        for c in Xc.columns:
+            if str(Xc[c].dtype) in ("object", "bool"):
+                Xc[c] = Xc[c].astype("category")
+        return model.predict(Xc)
     # XGBoost Booster
     if xgb is not None and isinstance(model, xgb.Booster):
         d = xgb.DMatrix(X.values, feature_names=X.columns.tolist())
@@ -116,7 +149,7 @@ def main():
 
     # Load or train model
     if args.model_file:
-        if args.model-kind == "lgbm":
+        if args.model_kind == "lgbm":
             booster = lgb.Booster(model_file=args.model_file)
         else:
             booster = xgb.Booster()
