@@ -1,0 +1,24 @@
+{
+  "best_trial_number": 47,
+  "best_value_aucpr": 0.2733931843668142,
+  "best_params": {
+    "boosting_type": "goss",
+    "learning_rate": 0.03708341398273897,
+    "num_leaves": 38,
+    "max_depth": 7,
+    "min_data_in_leaf": 154,
+    "feature_fraction": 0.6945475369488533,
+    "bagging_fraction": 1.0,
+    "bagging_freq": 0,
+    "min_gain_to_split": 1.0439231138500604,
+    "lambda_l1": 0.4182252034995033,
+    "lambda_l2": 3.7287034695960544e-07,
+    "scale_pos_weight": 6.057514557398338,
+    "objective": "binary",
+    "metric": "None",
+    "num_threads": 22,
+    "seed": 42,
+    "verbosity": -1
+  },
+  "prevalence": 0.08072881945686496
+}

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -8,44 +10,22 @@ import numpy as np
 import pandas as pd
 import lightgbm as lgb
 import shap
-from optuna.visualization.matplotlib import (
-    plot_optimization_history, plot_param_importances,
-    plot_parallel_coordinate, plot_slice, plot_contour
-)
 from sklearn.metrics import (
     roc_auc_score, precision_recall_curve, roc_curve, f1_score, 
-    average_precision_score
+    average_precision_score,
 )
+
+from credit_risk.utils.optuna_common import log_study_figures, export_trials_csv, _as_figure
 
 def _ensure_dir(path):
     os.makedirs(path, exist_ok=True)
 
-def _as_figure(ax_or_fig):
-    if isinstance(ax_or_fig, Figure):
-        return ax_or_fig
-    if hasattr(ax_or_fig, "figure"):  # single Axes
-        return ax_or_fig.figure
-    if isinstance(ax_or_fig, np.ndarray) and ax_or_fig.size > 0:
-        first = ax_or_fig.flat[0]
-        if hasattr(first, "figure"):
-            return first.figure
-        if isinstance(first, Figure):
-            return first
-    return plt.gcf()
-
-
 def _find_cv_metric_keys(cv_res: dict):
     ap_mean = "valid average_precision-mean"
     ap_std = "valid average_precision-stdv"
-
     if ap_mean in cv_res:
         return ap_mean, (ap_std if ap_std in cv_res else None), "AUC-PR (Average Precision)"
-
-    # If AUC-PR isn’t in CV results, break
-    raise KeyError(
-        f"AUC-PR metric not found in CV results. "
-        f"Available keys: {list(cv_res.keys())}"
-    )
+    raise KeyError(f"AUC-PR metric not found; keys: {list(cv_res.keys())}")
 
 def lgbm_average_precision(preds, train_data):
     y_true = train_data.get_label()
@@ -62,19 +42,13 @@ def log_cv_curve(cv_res, name_prefix="cv"):
     plt.plot(xs, vals, label=f"{pretty} (mean)")
     if stds.shape == vals.shape and np.all(np.isfinite(stds)):
         plt.fill_between(xs, vals - stds, vals + stds, alpha=0.2, label="±1 std")
-    plt.xlabel("Boosting round")
-    plt.ylabel(pretty)
-    plt.title(f"{name_prefix} {pretty} over iterations")
-    plt.legend()
-    # use a generic filename
+    plt.xlabel("Boosting round"); plt.ylabel(pretty)
+    plt.title(f"{name_prefix} {pretty} over iterations"); plt.legend()
     mlflow.log_figure(plt.gcf(), f"figures/{name_prefix}_cv_metric_curve.png")
     plt.close()
 
-
 def train_oof_and_log(best_params, X, y, folds, cat_cols):
     oof = np.zeros(len(y), dtype=float)
-    fold_metrics = []
-
     with mlflow.start_run(run_name="oof_evaluation", nested=True):
         for fi, (trn_idx, val_idx) in enumerate(folds):
             dtr = lgb.Dataset(X.iloc[trn_idx], label=y[trn_idx], categorical_feature=cat_cols, free_raw_data=False)
@@ -89,78 +63,52 @@ def train_oof_and_log(best_params, X, y, folds, cat_cols):
             preds = booster.predict(X.iloc[val_idx], num_iteration=booster.best_iteration)
             oof[val_idx] = preds
 
-            # Per-fold metrics
-            rocAUC = roc_auc_score(y[val_idx], preds)
-            ap = average_precision_score(y[val_idx], preds)  # <-- use AP to match CV
-            mlflow.log_metric(f"fold{fi}_auc", float(rocAUC))
-            mlflow.log_metric(f"fold{fi}_aucpr", float(ap))
-            fold_metrics.append((rocAUC, ap))
+            mlflow.log_metric(f"fold{fi}_auc", float(roc_auc_score(y[val_idx], preds)))
+            mlflow.log_metric(f"fold{fi}_aucpr", float(average_precision_score(y[val_idx], preds)))
 
-        # OOF metrics (aggregate)
+        # OOF metrics/plots
         oof_auc = roc_auc_score(y, oof)
-        oof_ap = average_precision_score(y, oof)  # <-- AP
-
+        oof_ap = average_precision_score(y, oof)
         precision, recall, thr_pr = precision_recall_curve(y, oof)
-        fprs, tprs, thr_roc = roc_curve(y, oof)
-
-        # Best F1 threshold (from PR thresholds)
+        fprs, tprs, _ = roc_curve(y, oof)
         f1s = [f1_score(y, (oof >= t).astype(int)) for t in thr_pr[:-1]] if len(thr_pr) > 1 else [0.0]
-        best_idx = int(np.argmax(f1s))
-        best_thr = float(thr_pr[best_idx]) if len(thr_pr) > 1 else 0.5
+        best_thr = float(thr_pr[int(np.argmax(f1s))]) if len(thr_pr) > 1 else 0.5
 
         mlflow.log_metric("oof_auc", float(oof_auc))
-        mlflow.log_metric("oof_aucpr", float(oof_ap))   # <-- AP
-        mlflow.log_metric("oof_best_f1", float(f1s[best_idx]))
+        mlflow.log_metric("oof_aucpr", float(oof_ap))
+        mlflow.log_metric("oof_best_f1", float(np.max(f1s)))
         mlflow.log_metric("oof_best_thr", best_thr)
 
-        # Curves
-        plt.figure(); plt.plot(fprs, tprs); plt.xlabel("FPR"); plt.ylabel("TPR"); plt.title("OOF ROC")
-        mlflow.log_figure(plt.gcf(), "figures/oof_roc.png"); plt.close()
+        fig = plt.figure(); plt.plot(fprs, tprs); plt.xlabel("FPR"); plt.ylabel("TPR"); plt.title("OOF ROC")
+        mlflow.log_figure(fig, "figures/oof_roc.png"); plt.close(fig)
+        fig = plt.figure(); plt.plot(recall, precision); plt.xlabel("Recall"); plt.ylabel("Precision"); plt.title("OOF PR")
+        mlflow.log_figure(fig, "figures/oof_pr.png"); plt.close(fig)
 
-        plt.figure(); plt.plot(recall, precision); plt.xlabel("Recall"); plt.ylabel("Precision"); plt.title("OOF PR")
-        mlflow.log_figure(plt.gcf(), "figures/oof_pr.png"); plt.close()
-
-        # Save OOF preds
-        oof_df = pd.DataFrame({"oof_pred": oof, "target": y})
-        oof_csv = "oof_predictions.csv"
-        oof_df.to_csv(oof_csv, index=False)
-        mlflow.log_artifact(oof_csv, artifact_path="oof")
-
+        pd.DataFrame({"oof_pred": oof, "target": y}).to_csv("oof_predictions.csv", index=False)
+        mlflow.log_artifact("oof_predictions.csv", artifact_path="oof")
     return oof
 
-
-
 def log_feature_importance(model, X):
-    importances_gain = model.feature_importance(importance_type="gain")
-    importances_split = model.feature_importance(importance_type="split")
     fi = pd.DataFrame({
         "feature": model.feature_name(),
-        "gain": importances_gain,
-        "split": importances_split
+        "gain": model.feature_importance(importance_type="gain"),
+        "split": model.feature_importance(importance_type="split"),
     }).sort_values("gain", ascending=False)
-    fi_csv = "feature_importance.csv"
-    fi.to_csv(fi_csv, index=False)
-    mlflow.log_artifact(fi_csv, artifact_path="importance")
+    fi.to_csv("feature_importance.csv", index=False)
+    mlflow.log_artifact("feature_importance.csv", artifact_path="importance")
 
     top = fi.head(30)
     plt.figure(figsize=(8, 10))
     plt.barh(top["feature"][::-1], top["gain"][::-1])
-    plt.xlabel("Gain")
-    plt.title("Top 30 Feature Importance (gain)")
+    plt.xlabel("Gain"); plt.title("Top 30 Feature Importance (gain)")
     plt.tight_layout()
     mlflow.log_figure(plt.gcf(), "figures/feature_importance_gain.png")
     plt.close()
 
-
 def log_shap_plots(model, X_sample):
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X_sample, check_additivity=False)
-
-    # LightGBM binary can return list [class0, class1]; prefer positive class
-    if isinstance(shap_values, list) and len(shap_values) == 2:
-        shap_values_to_use = shap_values[1]
-    else:
-        shap_values_to_use = shap_values
+    shap_values_to_use = shap_values[1] if isinstance(shap_values, list) and len(shap_values) == 2 else shap_values
 
     shap.summary_plot(shap_values_to_use, X_sample, show=False)
     plt.title("SHAP Summary")
@@ -192,25 +140,5 @@ def log_data_profile(X, y):
     mlflow.log_artifact("data_profile/missingness.csv")
 
 def log_optuna_study(study):
-    items = [
-        ("figures/optuna/opt_history.png", plot_optimization_history),
-        ("figures/optuna/param_importances.png", plot_param_importances),
-        ("figures/optuna/parallel_coord.png", plot_parallel_coordinate),
-        ("figures/optuna/slice.png", plot_slice),
-        ("figures/optuna/contour.png", plot_contour),
-    ]
-    for path, fn in items:
-        ax_or_fig = fn(study)         
-        fig = _as_figure(ax_or_fig)   
-        mlflow.log_figure(fig, path)
-        plt.close(fig)
-
-    # Trials table
-    df_trials = study.trials_dataframe(attrs=(
-        "number","value","state","params","user_attrs","system_attrs",
-        "datetime_start","datetime_complete","duration"
-    ))
-    os.makedirs("optuna", exist_ok=True)
-    out = "optuna/trials.csv"
-    df_trials.to_csv(out, index=False)
-    mlflow.log_artifact(out)
+    log_study_figures(study, prefix="figures/optuna_lgbm")
+    export_trials_csv(study, path="optuna/lgbm_trials.csv")
