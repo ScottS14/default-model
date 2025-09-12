@@ -3,7 +3,6 @@ from __future__ import annotations
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
 import os
 import mlflow
 import numpy as np
@@ -15,10 +14,18 @@ from sklearn.metrics import (
     average_precision_score,
 )
 
-from credit_risk.utils.optuna_common import log_study_figures, export_trials_csv, _as_figure
+from credit_risk.utils.optuna_common import log_study_figures, export_trials_csv
+
+# Reporting path
+report_base = os.path.join("reports", "lgbm")
 
 def _ensure_dir(path):
     os.makedirs(path, exist_ok=True)
+
+def _report_path(*parts: str) -> str:
+    path = os.path.join(report_base, *parts)
+    _ensure_dir(os.path.dirname(path))
+    return path
 
 def _find_cv_metric_keys(cv_res: dict):
     ap_mean = "valid average_precision-mean"
@@ -44,6 +51,10 @@ def log_cv_curve(cv_res, name_prefix="cv"):
         plt.fill_between(xs, vals - stds, vals + stds, alpha=0.2, label="±1 std")
     plt.xlabel("Boosting round"); plt.ylabel(pretty)
     plt.title(f"{name_prefix} {pretty} over iterations"); plt.legend()
+
+    # Save locally under reports/lgbm and also log to MLflow
+    local_path = _report_path("figures", f"{name_prefix}_cv_metric_curve.png")
+    plt.savefig(local_path, bbox_inches="tight")
     mlflow.log_figure(plt.gcf(), f"figures/{name_prefix}_cv_metric_curve.png")
     plt.close()
 
@@ -79,13 +90,27 @@ def train_oof_and_log(best_params, X, y, folds, cat_cols):
         mlflow.log_metric("oof_best_f1", float(np.max(f1s)))
         mlflow.log_metric("oof_best_thr", best_thr)
 
-        fig = plt.figure(); plt.plot(fprs, tprs); plt.xlabel("FPR"); plt.ylabel("TPR"); plt.title("OOF ROC")
-        mlflow.log_figure(fig, "figures/oof_roc.png"); plt.close(fig)
-        fig = plt.figure(); plt.plot(recall, precision); plt.xlabel("Recall"); plt.ylabel("Precision"); plt.title("OOF PR")
-        mlflow.log_figure(fig, "figures/oof_pr.png"); plt.close(fig)
+        # ROC figure
+        fig = plt.figure()
+        plt.plot(fprs, tprs); plt.xlabel("FPR"); plt.ylabel("TPR"); plt.title("OOF ROC")
+        local_fig = _report_path("figures", "oof_roc.png")
+        fig.savefig(local_fig, bbox_inches="tight")
+        mlflow.log_figure(fig, "figures/oof_roc.png")
+        plt.close(fig)
 
-        pd.DataFrame({"oof_pred": oof, "target": y}).to_csv("oof_predictions.csv", index=False)
-        mlflow.log_artifact("oof_predictions.csv", artifact_path="oof")
+        # PR figure
+        fig = plt.figure()
+        plt.plot(recall, precision); plt.xlabel("Recall"); plt.ylabel("Precision"); plt.title("OOF PR")
+        local_fig = _report_path("figures", "oof_pr.png")
+        fig.savefig(local_fig, bbox_inches="tight")
+        mlflow.log_figure(fig, "figures/oof_pr.png")
+        plt.close(fig)
+
+        # Save OOF CSV locally and log as artifact
+        oof_csv = _report_path("oof", "oof_predictions.csv")
+        pd.DataFrame({"oof_pred": oof, "target": y}).to_csv(oof_csv, index=False)
+        mlflow.log_artifact(oof_csv, artifact_path="oof")
+
     return oof
 
 def log_feature_importance(model, X):
@@ -94,14 +119,21 @@ def log_feature_importance(model, X):
         "gain": model.feature_importance(importance_type="gain"),
         "split": model.feature_importance(importance_type="split"),
     }).sort_values("gain", ascending=False)
-    fi.to_csv("feature_importance.csv", index=False)
-    mlflow.log_artifact("feature_importance.csv", artifact_path="importance")
 
+    # Save CSV locally and to MLflow
+    fi_csv = _report_path("importance", "feature_importance.csv")
+    fi.to_csv(fi_csv, index=False)
+    mlflow.log_artifact(fi_csv, artifact_path="importance")
+
+    # Top 30 gain barh
     top = fi.head(30)
     plt.figure(figsize=(8, 10))
     plt.barh(top["feature"][::-1], top["gain"][::-1])
     plt.xlabel("Gain"); plt.title("Top 30 Feature Importance (gain)")
     plt.tight_layout()
+
+    local_fig = _report_path("figures", "feature_importance_gain.png")
+    plt.savefig(local_fig, bbox_inches="tight")
     mlflow.log_figure(plt.gcf(), "figures/feature_importance_gain.png")
     plt.close()
 
@@ -110,21 +142,28 @@ def log_shap_plots(model, X_sample):
     shap_values = explainer.shap_values(X_sample, check_additivity=False)
     shap_values_to_use = shap_values[1] if isinstance(shap_values, list) and len(shap_values) == 2 else shap_values
 
+    # Summary
     shap.summary_plot(shap_values_to_use, X_sample, show=False)
     plt.title("SHAP Summary")
+    local_fig = _report_path("figures", "shap_summary.png")
+    plt.savefig(local_fig, bbox_inches="tight")
     mlflow.log_figure(plt.gcf(), "figures/shap_summary.png")
     plt.close()
 
+    # Dependence plots on top features
     importances = model.feature_importance(importance_type="gain")
     features = np.array(model.feature_name())
     top_features = features[np.argsort(importances)[::-1][:4]]
     for f in top_features:
         shap.dependence_plot(f, shap_values_to_use, X_sample, show=False)
-        mlflow.log_figure(plt.gcf(), f"figures/shap_dependence_{f}.png")
+        safe = str(f).replace(os.sep, "_")
+        local_fig = _report_path("figures", f"shap_dependence_{safe}.png")
+        plt.savefig(local_fig, bbox_inches="tight")
+        mlflow.log_figure(plt.gcf(), f"figures/shap_dependence_{safe}.png")
         plt.close()
 
 def log_data_profile(X, y):
-    _ensure_dir("data_profile")
+    # Summary
     meta = {
         "n_rows": int(X.shape[0]),
         "n_features": int(X.shape[1]),
@@ -132,13 +171,17 @@ def log_data_profile(X, y):
         "n_categorical": int(len(X.select_dtypes(include=['category']).columns)),
         "n_numeric": int(len(X.select_dtypes(include=[np.number]).columns)),
     }
-    pd.DataFrame([meta]).to_csv("data_profile/summary.csv", index=False)
-    mlflow.log_artifact("data_profile/summary.csv")
+    summary_csv = _report_path("data_profile", "summary.csv")
+    pd.DataFrame([meta]).to_csv(summary_csv, index=False)
+    mlflow.log_artifact(summary_csv)
 
+    # Missingness
+    miss_csv = _report_path("data_profile", "missingness.csv")
     miss = X.isna().mean().sort_values(ascending=False)
-    miss.to_csv("data_profile/missingness.csv", header=["missing_rate"])
-    mlflow.log_artifact("data_profile/missingness.csv")
+    miss.to_csv(miss_csv, header=["missing_rate"])
+    mlflow.log_artifact(miss_csv)
 
 def log_optuna_study(study):
     log_study_figures(study, prefix="figures/optuna_lgbm")
-    export_trials_csv(study, path="optuna/lgbm_trials.csv")
+    trials_csv = _report_path("optuna", "lgbm_trials.csv")
+    export_trials_csv(study, path=trials_csv)

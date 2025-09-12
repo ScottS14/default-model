@@ -6,57 +6,38 @@ import shap
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
-try:
-    import lightgbm as lgb
-except ImportError:
-    lgb = None
-
-try:
-    import xgboost as xgb
-except ImportError:
-    xgb = None
-
+import lightgbm as lgb
+import xgboost as xgb
 
 def _unwrap_best_params(p: dict) -> dict:
     return p.get("best_params", p)
 
 def _sanitize_lgbm_params(p: dict) -> tuple[dict, int]:
     p = _unwrap_best_params(p).copy()
-
     num_boost_round = int(p.pop("n_estimators", 1000))
-
     if "n_jobs" in p:
         p["num_threads"] = int(p.pop("n_jobs"))
-
-    for k in ["best_params", "best_score", "study", "eval_metric"]:  # lgb uses "metric"
+    for k in ["best_params", "best_score", "study", "eval_metric"]:
         p.pop(k, None)
-
     for k in ["tree_method", "max_depth_growth", "gamma"]:
         p.pop(k, None)
-
     p.setdefault("objective", "binary")
-
     return p, num_boost_round
 
 def _sanitize_xgb_params(p: dict) -> tuple[dict, int]:
     p = _unwrap_best_params(p).copy()
     num_boost_round = int(p.pop("n_estimators", p.pop("num_boost_round", 1000)))
-
     for k in ("best_params","best_value","best_value_aucpr","best_trial_number","study","direction"):
         p.pop(k, None)
-
     if "learning_rate" in p and "eta" not in p:
         p["eta"] = p.pop("learning_rate")
     if "reg_alpha" in p and "alpha" not in p:
         p["alpha"] = p.pop("reg_alpha")
     if "reg_lambda" in p and "lambda" not in p:
         p["lambda"] = p.pop("reg_lambda")
-
     p.setdefault("objective", "binary:logistic")
     p.setdefault("eval_metric", "aucpr")
     return p, num_boost_round
-
 
 def _load_best_params(path: str) -> dict:
     with open(path, "r") as f:
@@ -64,11 +45,10 @@ def _load_best_params(path: str) -> dict:
 
 def _fit_lgbm(X: pd.DataFrame, y: np.ndarray, params: dict):
     Xc = X.copy()
-    cat_cols = [c for c in Xc.columns if Xc[c].dtype == "object" or Xc[c].dtype == bool or isinstance(Xc[c].dtype, pd.Categorical)]
+    cat_cols = [c for c in Xc.columns if Xc[c].dtype == "object" or Xc[c].dtype == bool or isinstance(Xc[c].dtype, pd.CategoricalDtype)]
     for c in cat_cols:
         if not isinstance(Xc[c].dtype, pd.CategoricalDtype):
             Xc[c] = Xc[c].astype("category")
-
     clean_params, num_boost_round = _sanitize_lgbm_params(params)
     dtr = lgb.Dataset(Xc, label=y, categorical_feature=cat_cols, free_raw_data=False)
     booster = lgb.train(clean_params, dtr, num_boost_round=num_boost_round)
@@ -81,18 +61,15 @@ def _fit_xgb(X: pd.DataFrame, y: np.ndarray, params: dict):
     return booster
 
 def _predict(model, X: pd.DataFrame) -> np.ndarray:
-    # LightGBM Booster
-    if lgb is not None and isinstance(model, lgb.Booster):
+    if isinstance(model, lgb.Booster):
         Xc = X.copy()
         for c in Xc.columns:
             if str(Xc[c].dtype) in ("object", "bool"):
                 Xc[c] = Xc[c].astype("category")
         return model.predict(Xc)
-    # XGBoost Booster
-    if xgb is not None and isinstance(model, xgb.Booster):
+    if isinstance(model, xgb.Booster):
         d = xgb.DMatrix(X.values, feature_names=X.columns.tolist())
         return model.predict(d)
-    # sklearn-wrapped LGBM
     if hasattr(model, "predict_proba"):
         return model.predict_proba(X)[:, 1]
     return model.predict(X)
@@ -106,11 +83,15 @@ def _as_positive_class_shap(explainer, X_sample):
         return sv[1]
     return sv
 
+def _default_out_dir(model_kind: str) -> str:
+    family = "lgbm" if model_kind == "lgbm" else "xgboost"
+    return os.path.join("reports", family, "figures", "shap")
+
 def shap_beeswarm_and_force(model, X: pd.DataFrame, out_dir: str, k_force: int = 5, sample_beeswarm: int = 3000, seed: int = 42):
     os.makedirs(out_dir, exist_ok=True)
     rng = np.random.default_rng(seed)
 
-    # sample for beeswarm (speed & readability)
+    # sample for beeswarm
     if len(X) > sample_beeswarm:
         idx = rng.choice(len(X), size=sample_beeswarm, replace=False)
         X_swarm = X.iloc[idx].copy()
@@ -127,13 +108,15 @@ def shap_beeswarm_and_force(model, X: pd.DataFrame, out_dir: str, k_force: int =
     plt.savefig(os.path.join(out_dir, "shap_beeswarm.png"), dpi=150)
     plt.close()
 
-    # pick 5 customers: highest predicted risk
+    # pick k customers by highest predicted risk
     probs = _predict(model, X)
     top_idx = np.argsort(-probs)[:k_force]
 
     for rank, i in enumerate(top_idx, start=1):
         x_row = X.iloc[i:i+1]
         sv_row = _as_positive_class_shap(explainer, x_row)
+
+        # Static PNG version
         shap.force_plot(
             explainer.expected_value if not isinstance(explainer.expected_value, (list, tuple)) else explainer.expected_value[1],
             sv_row[0] if isinstance(sv_row, np.ndarray) else sv_row,
@@ -146,6 +129,14 @@ def shap_beeswarm_and_force(model, X: pd.DataFrame, out_dir: str, k_force: int =
         plt.savefig(os.path.join(out_dir, f"shap_force_customer_{i}.png"), dpi=150)
         plt.close()
 
+        # Interactive HTML version
+        force_html = shap.force_plot(
+            explainer.expected_value if not isinstance(explainer.expected_value, (list, tuple)) else explainer.expected_value[1],
+            sv_row[0] if isinstance(sv_row, np.ndarray) else sv_row,
+            x_row
+        )
+        shap.save_html(os.path.join(out_dir, f"shap_force_customer_{i}.html"), force_html)
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--features-parquet", required=True, help="Parquet with features (and optionally TARGET)")
@@ -153,10 +144,13 @@ def main():
     p.add_argument("--model-kind", choices=["lgbm","xgb"], required=True)
     p.add_argument("--model-file", help="Optional: pre-trained model file (lgbm.txt / xgb.json)")
     p.add_argument("--best-params-json", help="If no model file, train with these params")
-    p.add_argument("--out-dir", default="reports/figures/shap")
+    p.add_argument("--out-dir", default=None, help="Optional override; default is reports/<family>/figures/shap")
     p.add_argument("--k-force", type=int, default=5)
     p.add_argument("--sample-beeswarm", type=int, default=3000)
     args = p.parse_args()
+
+    # decide default output dir by model
+    out_dir = args.out_dir if args.out_dir else _default_out_dir(args.model_kind)
 
     Xy = pd.read_parquet(args.features_parquet)
     y = None
@@ -182,7 +176,7 @@ def main():
         else:
             model = _fit_xgb(X, y, params)
 
-    shap_beeswarm_and_force(model, X, out_dir=args.out_dir, k_force=args.k_force, sample_beeswarm=args.sample_beeswarm)
+    shap_beeswarm_and_force(model, X, out_dir=out_dir, k_force=args.k_force, sample_beeswarm=args.sample_beeswarm)
 
 if __name__ == "__main__":
     main()
