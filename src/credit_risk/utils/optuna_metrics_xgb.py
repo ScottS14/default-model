@@ -23,7 +23,6 @@ def _report_path(*parts: str) -> str:
     return path
 
 def _safe_name(name: str) -> str:
-    # Avoid directory traversal or separators in filenames
     return str(name).replace(os.sep, "_").replace("/", "_")
 
 def xgb_log_cv_curve(cv_df: pd.DataFrame, name_prefix: str = "cv", metric_key: str | None = None):
