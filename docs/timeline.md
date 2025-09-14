@@ -42,7 +42,8 @@ Improve the baseline with Optuna HPO; provide model transparency and calibrated 
 - **CRS-2-b** 50-trial *Optuna study* on XGBoost; commit `optuna_study_xgb.db`.
 - **CRS-2-c** Generate *SHAP beeswarm* and force plots for five customers.
 - **CRS-2-d** Plot *probability-calibration curve*; compute *Brier score*.
-- **CRS-2-e** Update **README** with Model Zoo table + metrics.
+- **CRS-2-e** Calibrate the results
+- **CRS-2-f** Update **README** with Model Zoo table + metrics.
 
 </details>
 
