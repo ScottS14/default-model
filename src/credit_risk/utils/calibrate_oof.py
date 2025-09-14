@@ -54,7 +54,6 @@ def fit_from_oof(oof_csv: str, out_calibrator: str, method: str, fig_dir: str):
 
 def apply_calibrator(pred_csv_in: str, pred_col: str, calibrator_pkl: str, pred_csv_out: str):
     df = pd.read_csv(pred_csv_in)
-    import joblib
     cal = joblib.load(calibrator_pkl)
 
     def _apply(p):
@@ -73,7 +72,7 @@ def main():
     f = sub.add_parser("fit", help="fit calibrator from OOF")
     f.add_argument("--oof-csv", required=True)
     f.add_argument("--out-calibrator", required=True)
-    f.add_argument("--method", choices=["isotonic","sigmoid"], default="isotonic")
+    f.add_argument("--method", choices=["isotonic"], default="isotonic")
     f.add_argument("--fig-dir", default="reports/figures/calibration")
 
     a = sub.add_parser("apply", help="apply saved calibrator to preds")
