@@ -1,4 +1,4 @@
-# Credit-Risk Scoring – Home-Credit Default Risk 🚀
+# Credit-Risk Scoring – Home-Credit Default Risk
 *Predict the probability that an applicant will default, using open Home-Credit data.*
 
 ---
@@ -13,10 +13,10 @@ Lenders need to decide **“approve or refuse?”** within seconds while keeping
 ## 2  Project roadmap 
 | Phase | Status | ETA |
 |-------|--------|-----|
-| EDA and Feature engineering script (`engineer_credit.py`) | ▢ | Week 1 |
-| Baseline LightGBM, XGBoost & TabNet (CV) | ▢ | Week 2 |
-| Hyper-param tuning + calibration | ▢ | Week 3 |
-| SHAP explainability | ▢ | Week 4 |
+| EDA and Feature engineering script (`engineer_credit.py`) | ☑ | Week 1 |
+| Baseline LightGBM, XGBoost & TabNet (CV) | ☑ | Week 2 |
+| Hyper-param tuning + calibration | ☑ | Week 3 |
+| SHAP explainability | ☑ | Week 4 |
 | Docker < 400 MB + v1.0.0 release | ▢ | Week 5 |
 
 *(Full multi-project timeline lives in `/docs/timeline.md`.)*
