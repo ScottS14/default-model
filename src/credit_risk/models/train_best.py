@@ -101,10 +101,10 @@ def main():
     X = df.drop(columns=[args.target_col])
 
     if args.model_kind == "lgbm":
-        out = args.out_model or "src/credit_risk/models/lightgbm/best_lgbm.txt"
+        out = args.out_model or "src/credit_risk/models/lgbm/best_lgbm.txt"
         train_lgbm(X, y, args.best_params_json, out)
     else:
-        out = args.out_model or "src/credit_risk/models/xgboost/best_xgb.json"
+        out = args.out_model or "src/credit_risk/models/xgb/best_xgb.json"
         train_xgb(X, y, args.best_params_json, out)
 
 
