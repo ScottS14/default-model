@@ -55,8 +55,9 @@ Ship a lean, reproducible artifact and public release.
 
 #### Tasks
 - **CRS-3-a** Build production *Dockerfile* (< 400 MB) and push to GHCR.
-- **CRS-3-b** Record 3-minute *Loom walkthrough*; store link in `/docs/links.md`.
-- **CRS-3-c** Tag **v1.0.0**, archive via Zenodo, embed DOI badge.
-- **CRS-3-d** Draft *LinkedIn promo* with hero image (`promo_linkedin.md`).
+- **CRS-3-b** Debugging and refactoring 
+- **CRS-3-c** Record 3-minute *Loom walkthrough*; store link in `/docs/links.md`.
+- **CRS-3-d** Tag **v1.0.0**, archive via Zenodo, embed DOI badge.
+- **CRS-3-e** Draft *LinkedIn promo* with hero image (`promo_linkedin.md`).
 
 </details>
