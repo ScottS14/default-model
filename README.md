@@ -17,7 +17,7 @@ Lenders need to decide **“approve or refuse?”** within seconds while keeping
 | Baseline LightGBM, XGBoost & TabNet (CV) | ☑ | Week 2 |
 | Hyper-param tuning + calibration | ☑ | Week 3 |
 | SHAP explainability | ☑ | Week 4 |
-|### Project has been put on hold due to interview prep and moving to Scotland|▢|week 5|
+|Project has been put on hold due to interview prep and moving to Scotland|▢|week 5|
 | Docker < 400 MB + v1.0.0 release | ▢ | tbd |
 
 *(Full multi-project timeline lives in `/docs/timeline.md`.)*
