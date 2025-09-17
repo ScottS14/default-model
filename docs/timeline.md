@@ -46,7 +46,7 @@ Improve the baseline with Optuna HPO; provide model transparency and calibrated 
 - **CRS-2-f** Update **README** with Model Zoo table + metrics.
 
 </details>
-
+### Project has been put on hold due to interview prep and moving to Scotland
 <details>
 <summary>Week&nbsp;4-5 – Package & publish v1.0.0</summary>
 
